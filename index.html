@@ -965,7 +965,7 @@ function addReportLogRow(filename, msg, isError){
   log.prepend(row);
 }
 
-const REPORTS_CACHE_KEY = 'bfx_reports_cache_v1';
+const REPORTS_CACHE_KEY = 'bfx_reports_cache_v1_' + firebaseConfig.projectId;
 
 function loadCachedReports(){
   try{
