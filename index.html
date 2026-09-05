@@ -863,6 +863,14 @@ function addUidBoxIfMissing(uid){
 
 const REQUIRED_HEADERS = ['name','profession','faction','kills','assists','deaths','damage','largest performed hit','damage taken','healing','largest heal','captures'];
 
+// Sanity ceilings against a bad OCR misread (e.g. a stray extra digit
+// turning 690,000 into 6,900,000) or a hand-edited/tampered upload —
+// no legitimate single-player stat line comes anywhere close to these.
+// Checked in validateAndParseReportHTML so it applies to every upload
+// path: the OCR-converted file and any manually dropped .html file alike.
+const MAX_PLAUSIBLE_DAMAGE = 7000000;
+const MAX_PLAUSIBLE_HEALING = 5000000;
+
 function validateAndParseReportHTML(text){
   const doc_ = new DOMParser().parseFromString(text, 'text/html');
   const table = doc_.querySelector('table');
@@ -885,11 +893,19 @@ function validateAndParseReportHTML(text){
     const num = (h) => { const v = parseFloat(get(h)); return isNaN(v) ? 0 : v; };
     const name = get('name');
     if(!name) continue;
+    const damage = num('damage');
+    const healing = num('healing');
+    if(damage > MAX_PLAUSIBLE_DAMAGE){
+      return { valid:false, error: `Implausible damage for ${name}: ${damage.toLocaleString()} exceeds the maximum expected (${MAX_PLAUSIBLE_DAMAGE.toLocaleString()}). Likely an OCR misread — double-check the source image.` };
+    }
+    if(healing > MAX_PLAUSIBLE_HEALING){
+      return { valid:false, error: `Implausible healing for ${name}: ${healing.toLocaleString()} exceeds the maximum expected (${MAX_PLAUSIBLE_HEALING.toLocaleString()}). Likely an OCR misread — double-check the source image.` };
+    }
     players.push({
       name, profession: get('profession') || 'Unknown', faction: get('faction') || 'Unknown',
       kills: num('kills'), assists: num('assists'), deaths: num('deaths'),
-      damage: num('damage'), largestHit: num('largest performed hit'), damageTaken: num('damage taken'),
-      healing: num('healing'), largestHeal: num('largest heal'), captures: num('captures')
+      damage, largestHit: num('largest performed hit'), damageTaken: num('damage taken'),
+      healing, largestHeal: num('largest heal'), captures: num('captures')
     });
   }
   if(players.length === 0) return { valid:false, error:'Header row matched, but no player rows could be parsed.' };
@@ -948,11 +964,19 @@ async function handleUpload(file){
   try{
     const text = await readFileAsText(file);
     const result = validateAndParseReportHTML(text);
-    if(!result.valid){ addReportLogRow(file.name, 'REJECTED: ' + result.error, true); return; }
+    if(!result.valid){
+      const message = 'REJECTED: ' + result.error;
+      addReportLogRow(file.name, message, true);
+      return { ok:false, message };
+    }
     const day = await submitReport(result.players, file.name, false);
-    addReportLogRow(file.name, 'Accepted — day ' + day + ', ' + result.players.length + ' stocks', false);
+    const message = 'Accepted — day ' + day + ', ' + result.players.length + ' stocks';
+    addReportLogRow(file.name, message, false);
+    return { ok:true, message };
   }catch(err){
-    addReportLogRow(file.name, (err.duplicate ? 'REJECTED: ' : 'ERROR: ') + err.message, true);
+    const message = (err.duplicate ? 'REJECTED: ' : 'ERROR: ') + err.message;
+    addReportLogRow(file.name, message, true);
+    return { ok:false, message };
   }
 }
 
@@ -2874,9 +2898,9 @@ uploadConvertedHtml.addEventListener('click', async () => {
   if(!convertedReportFile) return;
   uploadConvertedHtml.disabled = true;
   setOcrStatus('Uploading converted report to the shared market…');
-  await handleUpload(convertedReportFile);
+  const result = await handleUpload(convertedReportFile);
   uploadConvertedHtml.disabled = false;
-  setOcrStatus('Converted report uploaded to the shared market.', 'ok');
+  setOcrStatus(result.message, result.ok ? 'ok' : 'err');
 });
 
 
