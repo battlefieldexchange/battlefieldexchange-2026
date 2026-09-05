@@ -2475,18 +2475,46 @@ function detectTableGrid(canvas){
   return { cols, rows };
 }
 
-function cropCellCanvas(sourceCanvas, x0, x1, y0, y1, inset=1, scale=4){
+// `tight`: false (default) uses the original fixed-inset crop — fine for
+// header labels and text cells (name/profession/faction), which are wide
+// enough that a flat margin never truncates them the way a lone digit can.
+// `tight`: true is for numeric cells only — a short 1-2 digit number can
+// sit right against a grid line, and the old fixed 3px inset was slicing
+// straight through a digit's leading stroke there (e.g. "92" losing its
+// "9" and reading as "2"). That path detects where the ink actually is and
+// pads around that instead of trusting a flat margin to always be safe.
+// (An earlier version of this also binarized the tight-crop output, but
+// that turned out to erode thin strokes — e.g. a "9"'s tail thinning away
+// until it read as "0" — so that step was dropped.)
+function cropCellCanvas(sourceCanvas, x0, x1, y0, y1, { scale=4, tight=false } = {}){
+  if(!tight){
+    const inset = 3;
+    const sx = Math.round(x0) + inset;
+    const sy = Math.round(y0) + inset;
+    const sw = Math.round(x1) - Math.round(x0) - inset*2;
+    const sh = Math.round(y1) - Math.round(y0) - inset*2;
+    if(sw <= 0 || sh <= 0) return null;
+    const out = document.createElement('canvas');
+    out.width = sw * scale;
+    out.height = sh * scale;
+    const ctx = out.getContext('2d');
+    ctx.imageSmoothingEnabled = true;
+    ctx.imageSmoothingQuality = 'high';
+    ctx.fillStyle = '#fff';
+    ctx.fillRect(0, 0, out.width, out.height);
+    ctx.drawImage(sourceCanvas, sx, sy, sw, sh, 0, 0, out.width, out.height);
+    return out;
+  }
+
+  const inset = 1;
   const sx = Math.round(x0) + inset;
   const sy = Math.round(y0) + inset;
   const sw = Math.round(x1) - Math.round(x0) - inset*2;
   const sh = Math.round(y1) - Math.round(y0) - inset*2;
   if(sw <= 0 || sh <= 0) return null;
 
-  // Grab (nearly) the full cell first — just enough inset to drop the literal
-  // grid-line pixel — rather than the old fixed 3px inset. That flat inset
-  // was cutting into digit strokes that sat close to a border and silently
-  // truncating multi-digit numbers (e.g. "92" losing its leading "9" and
-  // reading as "2").
+  // Grab (nearly) the full cell first — just enough inset to drop the
+  // literal grid-line pixel.
   const raw = document.createElement('canvas');
   raw.width = sw; raw.height = sh;
   const rawCtx = raw.getContext('2d');
@@ -2531,18 +2559,6 @@ function cropCellCanvas(sourceCanvas, x0, x1, y0, y1, inset=1, scale=4){
   ctx.fillStyle = '#fff';
   ctx.fillRect(0, 0, out.width, out.height);
   ctx.drawImage(raw, cx0, cy0, cw, ch, 0, 0, out.width, out.height);
-
-  // Binarize after upscaling — flattening anti-aliased gray fringes to solid
-  // black/white measurably helps Tesseract on thin digit strokes that
-  // otherwise wash out against the gray alternating-row cell fill.
-  const outData = ctx.getImageData(0, 0, out.width, out.height);
-  const d = outData.data;
-  for(let i = 0; i < d.length; i += 4){
-    const brightness = (d[i] + d[i+1] + d[i+2]) / 3;
-    const v = brightness < 165 ? 0 : 255;
-    d[i] = d[i+1] = d[i+2] = v;
-  }
-  ctx.putImageData(outData, 0, 0);
 
   return out;
 }
@@ -2672,9 +2688,9 @@ async function parseBattleReportFromGrid(canvas, workerPool, onProgress){
       const taskIdx = nextTask++;
       if(taskIdx >= tasks.length) return;
       const { r, c } = tasks[taskIdx];
-      const cell = cropCellCanvas(canvas, cols[c], cols[c+1], rows[r], rows[r+1]);
       const field = fieldForColumn[c];
       const isText = field ? TEXT_FIELDS.has(field) : false;
+      const cell = cropCellCanvas(canvas, cols[c], cols[c+1], rows[r], rows[r+1], { tight: !isText });
       const value = isText ? await ocrTextCell(worker, cell) : await ocrNumericCell(worker, cell);
       // name/profession/faction must never end up blank, and a numeric
       // cell must never end up '0' just because OCR gave up on it - both
