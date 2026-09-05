@@ -2365,7 +2365,15 @@ const OCR_TEXT_WHITELIST = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz
 // column, others (medic-focused rounds) track "Medic Revives Performed" /
 // "Medic Cleanses" instead. Headers are read from the image itself and
 // matched against this table rather than assumed to always be the same
-// fixed 12 columns in the same order.
+// fixed 12 columns in the same order. Medic Revives/Cleanses are
+// deliberately NOT mapped to a field here - they go through the same
+// extraColumnLabels/p.extra pass-through as any other non-standard
+// column (see buildStandardBattleReportHtml above). They used to be
+// mapped to 'medicRevives'/'medicCleanses' here, which pulled them out
+// of that pass-through path, but nothing ever read those two fields back
+// out when building the player object or rendering the HTML - so both
+// columns were OCR'd, validated, and then silently dropped on the floor
+// instead of appearing in the output at all.
 const HEADER_FIELD_MAP = {
   'name': 'name',
   'profession': 'profession',
@@ -2378,9 +2386,7 @@ const HEADER_FIELD_MAP = {
   'damagetaken': 'damageTaken',
   'healing': 'healing',
   'largestheal': 'largestHeal',
-  'captures': 'captures',
-  'medicrevivesperformed': 'medicRevives',
-  'mediccleanses': 'medicCleanses'
+  'captures': 'captures'
 };
 const TEXT_FIELDS = new Set(['name','profession','faction']);
 
@@ -2444,7 +2450,12 @@ function detectTableGrid(canvas){
   const colIdx = [];
   for(let x=0;x<w;x++) if(colGrayCount[x]/h > 0.8) colIdx.push(x);
   const rowIdx = [];
-  for(let y=0;y<h;y++) if(rowGrayCount[y]/w > 0.5) rowIdx.push(y);
+  // A genuine border row is dark across ~98-100% of the width. Bold header
+  // text can coincidentally cover 50-67% of the width at some scan lines
+  // (letter strokes lining up across many header words) without being a
+  // border at all — 0.85 sits well above that text noise and well below a
+  // real border line, confirmed against several real report screenshots.
+  for(let y=0;y<h;y++) if(rowGrayCount[y]/w > 0.85) rowIdx.push(y);
 
   if(!colIdx.length || !rowIdx.length){
     throw new Error('Could not detect a gridded table in this image. Use a screenshot of the full bordered battle-report table.');
@@ -2482,6 +2493,29 @@ function cropCellCanvas(sourceCanvas, x0, x1, y0, y1, inset=3, scale=4){
   return out;
 }
 
+// Distinguishes a numeric cell that is genuinely blank (no ink at all -
+// some report types really do print nothing for a 0, e.g. an unused
+// Captures column) from one that has a visible digit in it that OCR
+// simply failed to extract. Both look identical to a caller as "no
+// digits came back" - but only the first one is actually a real 0.
+// Silently treating the second one as 0 too is the exact same bug that
+// used to turn a missing profession into "Unknown": a read failure
+// getting silently rewritten into a value indistinguishable from real
+// data. Calibrated against real report screenshots: even the sparsest
+// single bold digit in these tables lights up 15-25% of its cell's
+// pixels, while a truly empty cell sits at ~0% - 1% leaves large margin
+// on both sides without tripping on anti-aliasing/JPEG noise.
+function cellHasInk(cellCanvas){
+  const ctx = cellCanvas.getContext('2d');
+  const { data } = ctx.getImageData(0, 0, cellCanvas.width, cellCanvas.height);
+  let darkPixels = 0;
+  const totalPixels = cellCanvas.width * cellCanvas.height;
+  for(let i=0; i<data.length; i+=4){
+    if(data[i] < 200 || data[i+1] < 200 || data[i+2] < 200) darkPixels++;
+  }
+  return (darkPixels / totalPixels) > 0.01;
+}
+
 // Digits only, PSM 6 first. Isolated single-character cells are the one
 // case PSM 6 doesn't already nail, so a couple of alternate page segmentation
 // modes are kept as a fallback rather than voted across (voting across PSMs
@@ -2494,18 +2528,46 @@ async function ocrNumericCell(worker, cellCanvas){
     const digits = (data.text || '').replace(/[^0-9]/g, '');
     if(digits !== '') return digits;
   }
-  return '0'; // a genuinely empty numeric cell in these reports means 0
+  // Every PSM came back with no digits. That's only trustworthy as a
+  // real 0 if the cell is actually visually blank - if there's ink here
+  // that none of the PSMs could turn into digits, silently writing '0'
+  // would corrupt this exact number instead of failing loudly.
+  if(cellHasInk(cellCanvas)) return null; // signals a genuine OCR failure, not an empty cell
+  return '0';
 }
 
 async function ocrTextCell(worker, cellCanvas){
   if(!cellCanvas) return '';
-  for(const psm of ['6','7']){
+  // PSM 13 ("raw line, no layout analysis") is kept as a third fallback
+  // specifically because it behaves differently from 6/7 on a small
+  // minority of cells in Tesseract.js vs. desktop Tesseract - a cell that
+  // one engine reads cleanly can still come back blank from another, and
+  // we'd rather burn one more recognize() pass than let that turn into a
+  // silent gap in the data.
+  for(const psm of ['6','7','13']){
     await worker.setParameters({ tessedit_pageseg_mode: psm, tessedit_char_whitelist: OCR_TEXT_WHITELIST });
     const { data } = await worker.recognize(cellCanvas);
     const txt = (data.text || '').replace(/\s+/g, ' ').trim();
     if(txt !== '') return txt;
   }
   return '';
+}
+
+// Thrown when a required cell comes back with no trustworthy reading
+// after every retry in ocrTextCell/ocrNumericCell - either a required
+// text field (name/profession/faction) OCR'd to nothing, or a numeric
+// cell had visible ink but no digits could be extracted from it. This
+// must never be caught and papered over with a placeholder like
+// "Unknown" or "0" - an unreadable required cell means the row isn't
+// safe to include, not that it should be guessed at. The caller
+// (handleImageFile) surfaces this to the user as a conversion failure
+// so they can rescan/recrop, instead of the app silently shipping a
+// table with fabricated data in it.
+class OcrRequiredCellError extends Error {
+  constructor(rowNumber, fieldLabel){
+    super(`Could not read the "${fieldLabel}" cell in data row ${rowNumber} of the table - OCR returned no trustworthy value for it after every retry. Refusing to guess a placeholder; please retry with a sharper/higher-resolution screenshot (or crop tighter around the table) and re-convert.`);
+    this.name = 'OcrRequiredCellError';
+  }
 }
 
 async function parseBattleReportFromGrid(canvas, workerPool, onProgress){
@@ -2559,7 +2621,18 @@ async function parseBattleReportFromGrid(canvas, workerPool, onProgress){
       const cell = cropCellCanvas(canvas, cols[c], cols[c+1], rows[r], rows[r+1]);
       const field = fieldForColumn[c];
       const isText = field ? TEXT_FIELDS.has(field) : false;
-      results[taskIdx] = isText ? await ocrTextCell(worker, cell) : await ocrNumericCell(worker, cell);
+      const value = isText ? await ocrTextCell(worker, cell) : await ocrNumericCell(worker, cell);
+      // name/profession/faction must never end up blank, and a numeric
+      // cell must never end up '0' just because OCR gave up on it - both
+      // are required to fail loudly (OcrRequiredCellError) rather than
+      // fall through to a placeholder later.
+      if(isText && value === ''){
+        throw new OcrRequiredCellError(r, rawHeaderForColumn[c] || field);
+      }
+      if(!isText && value === null){
+        throw new OcrRequiredCellError(r, rawHeaderForColumn[c] || field || `Column ${c+1}`);
+      }
+      results[taskIdx] = value;
       done++;
       if(onProgress) onProgress(done, totalCells);
     }
@@ -2581,10 +2654,17 @@ async function parseBattleReportFromGrid(canvas, workerPool, onProgress){
     if(!rowVals.name) continue;
     if(/^name$/i.test(rowVals.name) || /^profession$/i.test(rowVals.name)) continue; // stray header row
 
+    // Belt-and-suspenders: the per-cell throw above should already have
+    // stopped anything from getting here with a blank profession/faction,
+    // but this is the last point before the row is treated as good data,
+    // so it stays a hard failure rather than a silent "Unknown" here too.
+    if(!rowVals.profession) throw new OcrRequiredCellError(r, 'Profession');
+    if(!rowVals.faction) throw new OcrRequiredCellError(r, 'Faction');
+
     players.push({
       name: rowVals.name,
-      profession: rowVals.profession || 'Unknown',
-      faction: rowVals.faction || 'Unknown',
+      profession: rowVals.profession,
+      faction: rowVals.faction,
       kills: cleanOcrNumber(rowVals.kills),
       assists: cleanOcrNumber(rowVals.assists),
       deaths: cleanOcrNumber(rowVals.deaths),
