@@ -2486,6 +2486,32 @@ function detectTableGrid(canvas){
 // (An earlier version of this also binarized the tight-crop output, but
 // that turned out to erode thin strokes — e.g. a "9"'s tail thinning away
 // until it read as "0" — so that step was dropped.)
+// Tesseract is trained on dark text over a light background. A dark-theme
+// screenshot (light text on a dark cell background) reads far less
+// reliably without help, which is what caused headers on a black-theme
+// report to misrecognize entirely even though the grid itself was found
+// fine. This flips a cell to dark-on-light when it's the other way around,
+// leaving already-light cells untouched.
+function invertIfDarkBackground(canvas){
+  const ctx = canvas.getContext('2d');
+  const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+  const data = imageData.data;
+  let total = 0;
+  for(let i=0; i<data.length; i+=4){
+    total += (data[i] + data[i+1] + data[i+2]) / 3;
+  }
+  const avgBrightness = total / (data.length / 4);
+  if(avgBrightness < 128){
+    for(let i=0; i<data.length; i+=4){
+      data[i] = 255 - data[i];
+      data[i+1] = 255 - data[i+1];
+      data[i+2] = 255 - data[i+2];
+    }
+    ctx.putImageData(imageData, 0, 0);
+  }
+  return canvas;
+}
+
 function cropCellCanvas(sourceCanvas, x0, x1, y0, y1, { scale=4, tight=false } = {}){
   if(!tight){
     const inset = 3;
@@ -2503,7 +2529,7 @@ function cropCellCanvas(sourceCanvas, x0, x1, y0, y1, { scale=4, tight=false } =
     ctx.fillStyle = '#fff';
     ctx.fillRect(0, 0, out.width, out.height);
     ctx.drawImage(sourceCanvas, sx, sy, sw, sh, 0, 0, out.width, out.height);
-    return out;
+    return invertIfDarkBackground(out);
   }
 
   const inset = 1;
@@ -2560,7 +2586,7 @@ function cropCellCanvas(sourceCanvas, x0, x1, y0, y1, { scale=4, tight=false } =
   ctx.fillRect(0, 0, out.width, out.height);
   ctx.drawImage(raw, cx0, cy0, cw, ch, 0, 0, out.width, out.height);
 
-  return out;
+  return invertIfDarkBackground(out);
 }
 
 // Distinguishes a numeric cell that is genuinely blank (no ink at all -
