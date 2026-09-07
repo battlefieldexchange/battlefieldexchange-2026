@@ -6,28 +6,40 @@
 <title>Battlefield Exchange</title>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js"></script>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@500;600;700;800&family=Rajdhani:wght@500;600;700&display=swap" rel="stylesheet">
 <style>
+  /* Palette lifted from the in-game SWG holo-UI: near-black void, dark
+     desaturated teal windows, a cyan glow for anything "live" or
+     interactive, and the same warm gold the game reserves for credits/
+     capacity meters. Orbitron for display type (the GCW screen's blocky
+     window-title face), Rajdhani for UI labels (the condensed HUD face
+     used on buttons/tabs), IBM Plex Mono kept for anything tabular —
+     ledgers and stat columns still want fixed-width alignment. */
   :root{
-    --bg: #0a0f0c;
-    --panel: #0f1712;
-    --panel-2: #131d17;
-    --line: #24352a;
-    --phosphor: #4dff9e;
-    --phosphor-dim: #2d8a5c;
-    --amber: #ffb84d;
-    --red: #ff5d5d;
-    --blue: #5db8ff;
+    --bg: #050c0c;
+    --panel: #0a2321;
+    --panel-2: #0e2e2b;
+    --line: #3f7d78;
+    --phosphor: #7fe6da;
+    --phosphor-dim: #3f8f87;
+    --amber: #e0b34d;
+    --red: #ff6b5d;
+    --blue: #5db0e6;
     --purple: #c792ea;
-    --text: #d7ecdf;
-    --text-dim: #7fa08c;
+    --text: #d3ede8;
+    --text-dim: #6f9994;
     --mono: "IBM Plex Mono", "Courier New", monospace;
-    --sans: "Barlow Condensed", Arial, sans-serif;
+    --sans: "Rajdhani", Arial, sans-serif;
+    --display: "Orbitron", var(--sans);
   }
   *{box-sizing:border-box;}
   html,body{margin:0;padding:0;background:var(--bg);color:var(--text);font-family:var(--mono);}
   body{
     background-image:
-      radial-gradient(ellipse at top, rgba(77,255,158,0.05), transparent 60%),
+      radial-gradient(ellipse at top, rgba(127,230,218,0.06), transparent 60%),
+      radial-gradient(ellipse 60% 40% at 15% 85%, rgba(63,125,120,0.05), transparent 70%),
       repeating-linear-gradient(180deg, rgba(255,255,255,0.012) 0px, rgba(255,255,255,0.012) 1px, transparent 1px, transparent 3px);
     min-height:100vh;
     padding-bottom:60px;
@@ -37,8 +49,8 @@
   .hidden{display:none !important;}
 
   .auth-wrap{ max-width:420px; margin:9vh auto 0; padding:0 20px; }
-  .auth-card{ background:var(--panel); border:1px solid var(--line); border-radius:4px; padding:28px 26px; }
-  .auth-card h1{ font-family:var(--sans); color:var(--phosphor); font-size:28px; margin:0 0 4px; text-shadow:0 0 18px rgba(77,255,158,0.35); }
+  .auth-card{ background:var(--panel); border:1px solid var(--line); border-radius:2px; padding:28px 26px; box-shadow:0 0 0 1px rgba(63,125,120,0.25) inset, 0 0 30px rgba(127,230,218,0.07); }
+  .auth-card h1{ font-family:var(--display); font-weight:700; color:var(--phosphor); font-size:24px; letter-spacing:1px; margin:0 0 4px; text-shadow:0 0 18px rgba(127,230,218,0.4); }
   .auth-card .tagline{font-size:12px; color:var(--text-dim); margin-bottom:22px;}
   .auth-tabs{display:flex; gap:6px; margin-bottom:18px;}
   .auth-tabs button{ flex:1; font-family:var(--sans); font-weight:600; font-size:14px; background:var(--panel-2); border:1px solid var(--line); color:var(--text-dim); padding:8px; border-radius:2px; cursor:pointer; }
@@ -50,10 +62,10 @@
 
   header.exchange-header{
     border-bottom:1px solid var(--line); padding:22px 28px 18px; display:flex; justify-content:space-between;
-    align-items:flex-end; flex-wrap:wrap; gap:14px; background:linear-gradient(180deg, rgba(77,255,158,0.04), transparent);
+    align-items:flex-end; flex-wrap:wrap; gap:14px; background:linear-gradient(180deg, rgba(127,230,218,0.04), transparent);
   }
   .brand{display:flex;align-items:baseline;gap:14px;}
-  .brand h1{ font-family:var(--sans); font-weight:700; font-size:34px; letter-spacing:0.5px; margin:0; color:var(--phosphor); text-shadow:0 0 18px rgba(77,255,158,0.35); }
+  .brand h1{ font-family:var(--display); font-weight:700; font-size:28px; letter-spacing:1px; margin:0; color:var(--phosphor); text-shadow:0 0 18px rgba(127,230,218,0.4); }
   .brand .tick{ font-size:13px; color:var(--text-dim); border:1px solid var(--line); padding:3px 8px; border-radius:2px; }
   .session-stats{display:flex;gap:22px;font-size:13px; align-items:flex-end;}
   .session-stats .stat{text-align:right;}
@@ -71,9 +83,10 @@
   .grid{display:grid;grid-template-columns:1.6fr 1fr;gap:20px;}
   @media (max-width: 980px){ .grid{grid-template-columns:1fr;} }
 
-  .panel{background:var(--panel); border:1px solid var(--line); border-radius:3px;}
-  .panel-head{ padding:12px 16px; border-bottom:1px solid var(--line); display:flex; justify-content:space-between; align-items:center; }
-  .panel-head h2{font-family:var(--sans); font-size:18px; font-weight:600; margin:0; color:var(--text); letter-spacing:0.3px;}
+  .panel{background:var(--panel); border:1px solid var(--line); border-radius:2px; box-shadow:0 0 0 1px rgba(63,125,120,0.25) inset, 0 0 26px rgba(127,230,218,0.05);}
+  .panel-head{ padding:11px 16px; border-bottom:1px solid var(--line); display:flex; justify-content:space-between; align-items:center; position:relative; background:linear-gradient(180deg, rgba(127,230,218,0.06), transparent); }
+  .panel-head::after{ content:''; position:absolute; top:0; right:0; width:0; height:0; border-style:solid; border-width:0 13px 13px 0; border-color:transparent var(--line) transparent transparent; opacity:.6; pointer-events:none; }
+  .panel-head h2{font-family:var(--display); font-size:15px; font-weight:600; margin:0; color:var(--text); letter-spacing:0.8px; text-transform:uppercase;}
   .panel-head .sub{font-size:11px;color:var(--text-dim);}
   .panel-body{padding:14px 16px;}
 
@@ -101,7 +114,7 @@
   table.ticker{width:100%; border-collapse:collapse; font-size:13px;}
   table.ticker thead th{ text-align:left; font-family:var(--sans); font-weight:600; font-size:12px; color:var(--text-dim); border-bottom:1px solid var(--line); padding:6px 8px; position:sticky; top:0; background:var(--panel); }
   table.ticker td{padding:7px 8px; border-bottom:1px solid rgba(36,53,42,0.6); vertical-align:middle;}
-  table.ticker tbody tr:hover{background:rgba(77,255,158,0.04);}
+  table.ticker tbody tr:hover{background:rgba(127,230,218,0.04);}
   .sym{font-family:var(--sans); font-weight:600; letter-spacing:0.4px;}
   .cls-pill{font-weight:600;}
   .price{font-weight:600;}
@@ -111,7 +124,7 @@
   .chg.flat{color:var(--text-dim);}
   .spark{width:70px; height:24px; display:block;}
   .buy-btn{ font-family:var(--mono); font-size:11px; background:transparent; border:1px solid var(--phosphor-dim); color:var(--phosphor); padding:4px 9px; border-radius:2px; cursor:pointer; }
-  .buy-btn:hover{background:rgba(77,255,158,0.12);}
+  .buy-btn:hover{background:rgba(127,230,218,0.12);}
   .empty-state{color:var(--text-dim); font-size:13px; padding:30px 10px; text-align:center;}
 
   .type-tabs{display:flex; gap:6px; margin-bottom:14px;}
@@ -141,7 +154,7 @@
   .pos-card .top .sym{font-size:14px;}
   .pos-card .detail{color:var(--text-dim); display:flex; justify-content:space-between;}
   .pos-card .detail b{color:var(--text);}
-  .pos-card.settled-win{border-color:var(--phosphor-dim); background:rgba(77,255,158,0.05);}
+  .pos-card.settled-win{border-color:var(--phosphor-dim); background:rgba(127,230,218,0.05);}
   .pos-card.settled-loss{border-color:var(--red); background:rgba(255,93,93,0.05);}
   .pos-card .kind{font-size:10px; color:var(--text-dim); text-transform:uppercase; letter-spacing:0.5px;}
   .tag{font-size:10px; padding:1px 6px; border-radius:10px; border:1px solid currentColor;}
@@ -165,7 +178,7 @@
   .dismiss-btn{ font-family:var(--mono); font-size:10px; background:transparent; border:1px solid var(--line); color:var(--text-dim); padding:2px 7px; border-radius:2px; cursor:pointer; margin-left:8px; }
   .dismiss-btn:hover{border-color:var(--text); color:var(--text);}
   .close-btn{ font-family:var(--mono); font-size:11px; background:transparent; border:1px solid var(--phosphor-dim); color:var(--phosphor); padding:4px 10px; border-radius:2px; cursor:pointer; }
-  .close-btn:hover{background:rgba(77,255,158,0.12);}
+  .close-btn:hover{background:rgba(127,230,218,0.12);}
 
   .subnav{max-width:1280px; margin:0 auto; padding:14px 24px 0; display:flex; gap:8px; border-bottom:1px solid var(--line);}
   .subnav button{ font-family:var(--sans); font-size:15px; font-weight:600; background:transparent; border:none; color:var(--text-dim); padding:8px 4px 12px; cursor:pointer; border-bottom:2px solid transparent; margin-right:14px; }
@@ -179,7 +192,7 @@
   table.history{width:100%; border-collapse:collapse; font-size:13px;}
   table.history thead th{ text-align:left; font-family:var(--sans); font-weight:600; font-size:12px; color:var(--text-dim); border-bottom:1px solid var(--line); padding:8px; }
   table.history td{padding:8px; border-bottom:1px solid rgba(36,53,42,0.6);}
-  table.history tr:hover{background:rgba(77,255,158,0.04);}
+  table.history tr:hover{background:rgba(127,230,218,0.04);}
   .win-text{color:var(--phosphor);}
   .loss-text{color:var(--red);}
   .filter-pills{display:flex; gap:6px; margin-bottom:14px;}
@@ -224,6 +237,56 @@
   .ocr-actions button:hover{border-color:var(--phosphor-dim);color:var(--phosphor);}
   .ocr-actions button:disabled{opacity:.45;cursor:not-allowed;}
 
+  /* ---- Wagers ------------------------------------------------------- */
+  .outcome-input-row{display:flex; gap:6px; margin-bottom:8px; align-items:center;}
+  .outcome-input-row input{ flex:1; background:var(--panel-2); border:1px solid var(--line); color:var(--text); padding:7px 8px; font-family:var(--mono); font-size:13px; border-radius:2px; }
+  .outcome-input-row input:focus{outline:none; border-color:var(--phosphor-dim);}
+  .remove-outcome-btn{ font-family:var(--mono); font-size:13px; background:transparent; border:1px solid var(--line); color:var(--text-dim); width:28px; height:28px; border-radius:2px; cursor:pointer; flex-shrink:0; }
+  .remove-outcome-btn:hover{border-color:var(--red); color:var(--red);}
+  .add-outcome-btn{ font-family:var(--mono); font-size:12px; background:transparent; border:1px dashed var(--line); color:var(--text-dim); padding:6px 10px; border-radius:2px; cursor:pointer; width:100%; margin-bottom:12px; }
+  .add-outcome-btn:hover{border-color:var(--phosphor-dim); color:var(--phosphor);}
+
+  .bet-filter-pills{display:flex; gap:6px; margin-bottom:14px;}
+
+  .bet-card{border:1px solid var(--line); border-radius:2px; padding:14px 16px; margin-bottom:14px; background:var(--panel-2);}
+  .bet-card .bet-top{display:flex; justify-content:space-between; align-items:flex-start; gap:10px; margin-bottom:4px;}
+  .bet-card .bet-title{font-family:var(--display); font-size:15px; font-weight:600; color:var(--text); letter-spacing:0.3px;}
+  .bet-card .bet-meta{font-size:11px; color:var(--text-dim); margin-bottom:12px;}
+  .bet-card .bet-meta b{color:var(--text);}
+
+  .outcome-row{margin-bottom:10px;}
+  .outcome-row .outcome-label-line{display:flex; justify-content:space-between; font-size:12px; margin-bottom:4px;}
+  .outcome-row .outcome-label-line .name{color:var(--text); font-weight:600;}
+  .outcome-row .outcome-label-line .odds{color:var(--text-dim);}
+  .outcome-bar{height:8px; background:var(--panel); border:1px solid var(--line); border-radius:2px; overflow:hidden;}
+  .outcome-bar .fill{height:100%; transition:width .2s;}
+  .outcome-row.winner .outcome-label-line .name{color:var(--phosphor);}
+  .outcome-row.winner .outcome-label-line .name::after{content:' — WON'; font-size:10px; letter-spacing:0.5px;}
+
+  .wager-controls{display:flex; gap:8px; align-items:center; margin-top:12px; flex-wrap:wrap;}
+  .wager-controls select, .wager-controls input{ background:var(--panel); border:1px solid var(--line); color:var(--text); padding:7px 8px; font-family:var(--mono); font-size:13px; border-radius:2px; }
+  .wager-controls select{flex:1; min-width:120px;}
+  .wager-controls input{width:110px;}
+  .wager-controls button{ font-family:var(--sans); font-weight:600; font-size:13px; background:var(--phosphor-dim); color:#04130f; border:none; padding:8px 14px; border-radius:2px; cursor:pointer; }
+  .wager-controls button:hover{background:var(--phosphor);}
+  .wager-controls button:disabled{background:var(--line); color:var(--text-dim); cursor:not-allowed;}
+  .wager-quote{font-size:11px; color:var(--text-dim); margin-top:6px; min-height:14px;}
+  .wager-quote b{color:var(--phosphor);}
+
+  .bet-card-footer{display:flex; justify-content:space-between; align-items:center; margin-top:10px;}
+  .bet-status-tag{font-size:10px; padding:2px 8px; border-radius:10px; border:1px solid currentColor; text-transform:uppercase; letter-spacing:0.5px;}
+  .bet-status-tag.open{color:var(--phosphor);}
+  .bet-status-tag.resolved{color:var(--amber);}
+  .bet-status-tag.cancelled{color:var(--text-dim);}
+
+  .bet-status-tag.closed{color:var(--amber);}
+  .admin-resolve{border:1px solid rgba(224,179,77,0.35); border-radius:2px; background:rgba(224,179,77,0.05); padding:10px 12px; margin-top:12px;}
+  .admin-resolve .label{font-size:10px; color:var(--amber); text-transform:uppercase; letter-spacing:0.5px; margin-bottom:6px;}
+  .admin-resolve select{width:100%; margin-bottom:8px; background:var(--panel-2); border:1px solid var(--line); color:var(--text); padding:7px 8px; font-family:var(--mono); font-size:13px; border-radius:2px;}
+  .admin-resolve button{width:100%; font-family:var(--sans); font-weight:600; font-size:13px; background:transparent; border:1px solid var(--amber); color:var(--amber); padding:8px; border-radius:2px; cursor:pointer; margin-bottom:6px;}
+  .admin-resolve button:hover{background:rgba(224,179,77,0.12);}
+  .admin-resolve button.dismiss-btn{border-color:var(--line); color:var(--text-dim); margin-left:0;}
+  .admin-resolve button.dismiss-btn:hover{border-color:var(--text); color:var(--text); background:transparent;}
 </style>
 </head>
 <body>
@@ -259,6 +322,7 @@
     <div class="stat"><div class="label">NET WORTH</div><div class="value" id="statNet">$10,000.00</div></div>
     <div class="who">
       <div><b id="whoUsername"></b><span class="admin-pill hidden" id="adminPill">ADMIN</span></div>
+      <div class="hidden" id="notAdminUidHint" style="font-size:11px; color:var(--text-dim); max-width:220px;"></div>
       <button class="logout-btn" id="logoutBtn">Sign out</button>
     </div>
   </div>
@@ -266,6 +330,7 @@
 
 <nav class="subnav">
   <button id="navFloor" class="active">Trading Floor</button>
+  <button id="navWagers">Wagers</button>
   <button id="navAssets">Assets</button>
   <button id="navHistory">Trade History</button>
   <button id="navElo">Elo Distribution</button>
@@ -419,6 +484,47 @@
   </section>
   </div>
 
+  <div id="viewWagers" class="hidden">
+    <div class="grid">
+      <div style="display:flex; flex-direction:column; gap:20px;">
+        <section class="panel">
+          <div class="panel-head"><h2>Open Wagers</h2><span class="sub" id="betsSub">0 open</span></div>
+          <div class="panel-body">
+            <div class="bet-filter-pills" id="betFilters">
+              <button data-filter="open" class="active">Open</button>
+              <button data-filter="resolved">Resolved / Cancelled</button>
+            </div>
+            <div id="betsBody"><div class="empty-state">No wagers posted yet — create the first one.</div></div>
+          </div>
+        </section>
+      </div>
+
+      <div style="display:flex; flex-direction:column; gap:20px;">
+        <section class="panel">
+          <div class="panel-head"><h2>Post a Wager</h2><span class="sub">anyone can post one</span></div>
+          <div class="panel-body">
+            <div class="type-desc">Pari-mutuel odds: everyone who bets on the winning outcome splits the whole pool, in proportion to their stake. Nothing is paid out automatically — an admin marks the winner once it's known, then pays out winners as a separate step.</div>
+            <div class="field"><label>What's being wagered on</label><input type="text" id="betTitle" placeholder="e.g. Will TESTPLAYER1 top the Elo board this week?" maxlength="140"></div>
+            <label style="display:block; font-size:11px; color:var(--text-dim); margin-bottom:4px;">Outcomes (2+)</label>
+            <div id="betOutcomeInputs">
+              <div class="outcome-input-row"><input type="text" data-outcome-input maxlength="60" placeholder="Outcome A"><button class="remove-outcome-btn" tabindex="-1">×</button></div>
+              <div class="outcome-input-row"><input type="text" data-outcome-input maxlength="60" placeholder="Outcome B"><button class="remove-outcome-btn" tabindex="-1">×</button></div>
+            </div>
+            <button class="add-outcome-btn" id="addOutcomeBtn">+ Add another outcome</button>
+            <div class="field"><label>Closes in (days, optional)</label><input type="number" min="1" step="1" id="betClosesDays" placeholder="Leave blank for no deadline"></div>
+            <button class="primary-btn" id="createBetBtn">Post wager</button>
+            <div class="msg" id="createBetMsg"></div>
+          </div>
+        </section>
+
+        <section class="panel">
+          <div class="panel-head"><h2>My Wagers</h2><span class="sub" id="myWagersSub">0 placed</span></div>
+          <div class="panel-body" id="myWagersBody"><div class="empty-state">You haven't placed a wager yet.</div></div>
+        </section>
+      </div>
+    </div>
+  </div>
+
   <div id="viewAssets" class="hidden">
     <section class="panel">
       <div class="panel-head"><h2>Assets</h2><span class="sub">buy and sell player stock</span></div>
@@ -511,7 +617,7 @@ import {
 import {
   getFirestore, doc, getDoc, getDocs, setDoc, updateDoc, deleteDoc,
   collection, addDoc, onSnapshot, query, orderBy, where, getCountFromServer,
-  runTransaction, serverTimestamp, writeBatch
+  runTransaction, serverTimestamp, writeBatch, Timestamp
 } from "https://www.gstatic.com/firebasejs/10.13.1/firebase-firestore.js";
 
 
@@ -538,7 +644,8 @@ const state = {
   uid: null, username: null, isAdmin: false,
   reports: [], day: 0, players: {}, elo: {},
   cash: 10000, realized: 0, positions: [],
-  selectedSymbols: new Set(), tradeType: 'call', historyFilter: 'all', assetSymbol: '', tickerSearch: ''
+  selectedSymbols: new Set(), tradeType: 'call', historyFilter: 'all', assetSymbol: '', tickerSearch: '',
+  bets: [], historicalBets: [], myWagers: [], betFilter: 'open'
 };
 // Admin-tunable Elo weights (unchanged, unaffected by anything below).
 const ELO_START = 1500, ELO_K = 32;
@@ -719,6 +826,7 @@ const MIN_ROLE_SAMPLE = 2;
 // swamping everything else in the composite.
 const Z_CLAMP = 2.5;
 let unsubReports = null, unsubPositions = null, unsubUserDoc = null, unsubWeights = null, unsubDayCounter = null;
+let unsubBets = null, unsubMyWagers = null;
 let reportsRecheckTimer = null;
 let pendingUsername = null;
 
@@ -811,13 +919,35 @@ onAuthStateChanged(auth, async (user) => {
   }catch(e){ state.isAdmin = false; }
   document.getElementById('debugPanel').classList.toggle('hidden', !state.isAdmin);
   document.getElementById('adminPill').classList.toggle('hidden', !state.isAdmin);
-  if(state.isAdmin) addUidBoxIfMissing(user.uid);
+  if(state.isAdmin){
+    addUidBoxIfMissing(user.uid);
+    document.getElementById('notAdminUidHint').classList.add('hidden');
+  } else {
+    // Bootstrapping problem: admins/{uid} can only ever be written by hand
+    // in the Firebase console (its write rule is `if false`), and
+    // addUidBoxIfMissing() above only ever showed inside the debug panel
+    // — which is itself hidden until you're already an admin. No account
+    // had any way to discover its own UID without already being one.
+    // This hint has no such gate: it's visible to anyone signed in who
+    // ISN'T admin yet, so the very first admin account can actually see
+    // the UID it needs to go paste into the console.
+    const hint = document.getElementById('notAdminUidHint');
+    hint.textContent = 'Not an admin. Your UID (add to the admins collection in Firebase console to change that): ' + user.uid;
+    hint.classList.remove('hidden');
+  }
 
   subscribeToMarket();
   subscribeToUserDoc(userRef);
   subscribeToPositions(user.uid);
   subscribeToPriceWeights();
   subscribeToDayCounter();
+  // subscribeToBets()/subscribeToMyWagers() are deliberately NOT started
+  // here — every logged-in user used to pay for a full bets-collection
+  // read on every page load whether or not they ever look at the Wagers
+  // tab. They now start lazily on first visit to that tab (see the
+  // navWagers click handler below) and, once started, stay live for the
+  // rest of the session — no repeated cost for switching tabs back and
+  // forth after that first visit.
 
   loadingScreen.classList.add('hidden');
   appRoot.classList.remove('hidden');
@@ -829,6 +959,8 @@ function teardownSubscriptions(){
   if(unsubPositions){ unsubPositions(); unsubPositions = null; }
   if(unsubWeights){ unsubWeights(); unsubWeights = null; }
   if(unsubDayCounter){ unsubDayCounter(); unsubDayCounter = null; }
+  if(unsubBets){ unsubBets(); unsubBets = null; }
+  if(unsubMyWagers){ unsubMyWagers(); unsubMyWagers = null; }
   if(reportsRecheckTimer){ clearInterval(reportsRecheckTimer); reportsRecheckTimer = null; }
 }
 // The "day" counter (settings doc counters/day) only used to get picked up
@@ -931,6 +1063,12 @@ async function submitReport(players, filename, isSynthetic){
   const counterRef = doc(db, 'counters', 'day');
   const reportsCol = collection(db, 'reports');
   const newReportRef = doc(reportsCol, statsHash); // deterministic ID: same stats -> same doc ID
+  // Canonical price snapshot for THIS report, keyed by the same hash so a
+  // security rule can prove (via existsAfter) that this snapshot was only
+  // ever published alongside a real, deduplicated report — never on its
+  // own. See the "market/pricesByReport" section of firestore.rules.
+  const pricesRef = doc(db, 'pricesByReport', statsHash);
+  const pointerRef = doc(db, 'market', 'latestReportId');
   let assignedDay;
   await runTransaction(db, async (tx) => {
     const existingReport = await tx.get(newReportRef);
@@ -942,11 +1080,28 @@ async function submitReport(players, filename, isSynthetic){
     const counterSnap = await tx.get(counterRef);
     const current = counterSnap.exists() ? counterSnap.data().value : 0;
     assignedDay = current + 1;
+
+    // Same single pricing implementation used everywhere else in this
+    // file (computeMarketFromReports) — run here, against the existing
+    // cache PLUS this not-yet-committed report, so the published snapshot
+    // reflects the market as it will look the instant this report lands.
+    const { players: pricedPlayers } = computeMarketFromReports([
+      ...state.reports,
+      { day: assignedDay, players }
+    ]);
+    const priceMap = {};
+    Object.keys(pricedPlayers).forEach(name => {
+      const hist = pricedPlayers[name].priceHistory;
+      priceMap[name] = hist.length ? hist[hist.length - 1].price : null;
+    });
+
     tx.set(counterRef, { value: assignedDay });
     tx.set(newReportRef, {
       day: assignedDay, filename, uploadedBy: state.uid, uploadedByUsername: state.username,
       uploadedAt: serverTimestamp(), isSynthetic: !!isSynthetic, players
     });
+    tx.set(pricesRef, { reportId: statsHash, day: assignedDay, prices: priceMap });
+    tx.set(pointerRef, { reportId: statsHash, day: assignedDay });
   });
   return assignedDay;
 }
@@ -1047,6 +1202,41 @@ function populateWeightInputsIfIdle(){
   });
 }
 
+// One-time, self-healing backfill: if this deployment doesn't have a price
+// snapshot published yet (e.g. right after adding this feature to a site
+// that already had report history), whichever signed-in admin next loads
+// the site quietly publishes one from the reports already cached, using
+// the exact same pricing function every other snapshot uses — no manual
+// step, no console command. A no-op on every load after the first, and a
+// safe no-op (permission denied, caught and ignored) for any non-admin
+// account that happens to load the site before the admin does.
+let priceSnapshotBackfillAttempted = false;
+async function ensurePriceSnapshotExists(){
+  if(priceSnapshotBackfillAttempted) return;
+  priceSnapshotBackfillAttempted = true;
+  try{
+    const pointerRef = doc(db,'market','latestReportId');
+    const pointerSnap = await getDoc(pointerRef);
+    if(pointerSnap.exists()) return; // already backfilled — nothing to do
+    if(!state.reports.length) return; // nothing to backfill from yet either
+
+    const { players } = computeMarketFromReports(state.reports);
+    const priceMap = {};
+    Object.keys(players).forEach(name => {
+      const hist = players[name].priceHistory;
+      priceMap[name] = hist.length ? hist[hist.length - 1].price : null;
+    });
+    const latest = [...state.reports].sort((a,b) => b.day - a.day)[0];
+    await setDoc(doc(db,'pricesByReport', latest.id), { reportId: latest.id, day: latest.day, prices: priceMap });
+    await setDoc(pointerRef, { reportId: latest.id, day: latest.day });
+    console.log('[bfx] Backfilled initial price snapshot for day', latest.day);
+  }catch(e){
+    // Signed in as a non-admin (the rules only allow this specific write
+    // for an admin), or another admin session already did it first —
+    // either way, safe to ignore.
+  }
+}
+
 async function subscribeToMarket(){
   if(reportsRecheckTimer){ clearInterval(reportsRecheckTimer); reportsRecheckTimer = null; }
 
@@ -1060,6 +1250,7 @@ async function subscribeToMarket(){
     state.day = list.reduce((max,r) => Math.max(max, r.day), 0);
     recomputeMarket();
     renderAll();
+    ensurePriceSnapshotExists();
   };
   if(byId.size) paint();
 
@@ -1125,6 +1316,615 @@ function subscribeToPositions(uid){
     renderPositions(); renderAssets(); renderHistory(); renderStats();
   });
 }
+
+// ---- Wagers ---------------------------------------------------------
+// Only 'open'/'closed' bets stay live-subscribed — that's the bounded,
+// slowly-growing set anyone actually needs real-time odds/status updates
+// for. Without this filter, EVERY bet ever created stays subscribed
+// forever for every logged-in user, growing unbounded as the site ages
+// and re-fetched in full on every single page load. A resolved or
+// cancelled bet is done changing (once fully paid/refunded, nothing about
+// it updates again), so historical ones referenced elsewhere (see
+// resolveBetInfo() below, used by My Wagers) are fetched once, on demand,
+// and cached client-side instead of kept on a live listener.
+function subscribeToBets(){
+  const q = query(collection(db, 'bets'), where('status', 'in', ['open','closed']));
+  unsubBets = onSnapshot(q, (snap) => {
+    state.bets = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+    renderBets(); renderMyWagers();
+  });
+}
+
+// One-time-per-bet lookup + cache for a bet that's fallen out of the live
+// active-bets set (i.e. resolved or cancelled) but is still referenced by
+// one of the current user's own past wagers. Never re-fetches a bet once
+// it's been cached, since a resolved/cancelled bet's data is done
+// changing by the time it leaves the active set.
+const oldBetsCache = {};
+async function resolveBetInfo(betId){
+  const live = state.bets.find(b => b.id === betId);
+  if(live) return live;
+  if(oldBetsCache[betId]) return oldBetsCache[betId];
+  try{
+    const snap = await getDoc(doc(db, 'bets', betId));
+    if(snap.exists()){
+      oldBetsCache[betId] = { id: snap.id, ...snap.data() };
+      return oldBetsCache[betId];
+    }
+  }catch(e){ /* leave uncached — render falls back to "no longer loaded" */ }
+  return null;
+}
+function subscribeToMyWagers(uid){
+  const q = query(collection(db, 'wagers'), where('uid', '==', uid));
+  unsubMyWagers = onSnapshot(q, (snap) => {
+    state.myWagers = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+    renderMyWagers();
+  });
+}
+
+function outcomeLabel(bet, outcomeId){
+  return (bet && bet.outcomes && bet.outcomes[outcomeId]) || outcomeId || '—';
+}
+
+// Creates a bet doc matching the exact shape bets/{betId}'s create rule
+// requires (pool literally {}, totalPool literally 0 — the rule rejects
+// anything else, on purpose, so no one can start a bet with rigged odds).
+async function createBet(){
+  const msgEl = document.getElementById('createBetMsg');
+  msgEl.className = 'msg'; msgEl.textContent = '';
+  const title = document.getElementById('betTitle').value.trim();
+  const rows = Array.from(document.querySelectorAll('#betOutcomeInputs [data-outcome-input]'));
+  const labels = rows.map(el => el.value.trim()).filter(Boolean);
+  const uniqueLabels = new Set(labels.map(l => l.toLowerCase()));
+
+  if(!title){ msgEl.className='msg err'; msgEl.textContent='Give the wager a title.'; return; }
+  if(labels.length < 2){ msgEl.className='msg err'; msgEl.textContent='Enter at least 2 outcomes.'; return; }
+  if(uniqueLabels.size !== labels.length){ msgEl.className='msg err'; msgEl.textContent='Outcomes must be unique.'; return; }
+
+  const daysInput = document.getElementById('betClosesDays').value;
+  const days = parseFloat(daysInput);
+  let closesAt = null;
+  if(daysInput !== '' && (!Number.isFinite(days) || days <= 0)){
+    msgEl.className='msg err'; msgEl.textContent='Closing deadline must be a positive number of days, or left blank.'; return;
+  }
+  if(daysInput !== ''){
+    closesAt = Timestamp.fromMillis(Date.now() + days * 86400000);
+  }
+
+  const outcomes = {};
+  labels.forEach((label, i) => { outcomes['o' + (i+1)] = label; });
+
+  try{
+    await addDoc(collection(db, 'bets'), {
+      creatorUid: state.uid, creatorUsername: state.username,
+      title, outcomes, pool: {}, totalPool: 0, status: 'open', closesAt,
+      createdAt: serverTimestamp()
+    });
+    document.getElementById('betTitle').value = '';
+    document.getElementById('betClosesDays').value = '';
+    document.getElementById('betOutcomeInputs').innerHTML =
+      '<div class="outcome-input-row"><input type="text" data-outcome-input maxlength="60" placeholder="Outcome A"><button class="remove-outcome-btn" tabindex="-1">×</button></div>'
+      + '<div class="outcome-input-row"><input type="text" data-outcome-input maxlength="60" placeholder="Outcome B"><button class="remove-outcome-btn" tabindex="-1">×</button></div>';
+    msgEl.className = 'msg ok'; msgEl.textContent = 'Wager posted.';
+  }catch(err){
+    msgEl.className = 'msg err'; msgEl.textContent = 'Could not post wager: ' + err.message;
+  }
+}
+
+// Places a wager inside a single transaction: reads the bet and the user's
+// cash fresh (not from cached state), then writes all three documents
+// (wager doc, bet pool bump, cash debit) together. A transaction — not a
+// plain writeBatch — because bets/{betId} is a doc many different bettors
+// can hit at once; a stale client-side pool number would just make the
+// rules' own delta check fail and the whole thing retry, same as
+// submitReport()'s use of runTransaction against the shared day counter.
+async function placeWager(betId, outcomeId, amount, msgEl){
+  amount = Math.round(Number(amount) * 100) / 100;
+  if(!amount || amount <= 0){ msgEl.className='msg err'; msgEl.textContent='Enter a wager amount greater than zero.'; return; }
+
+  const betRef = doc(db, 'bets', betId);
+  const userRef = doc(db, 'users', state.uid);
+  const wagerRef = doc(collection(db, 'wagers'));
+
+  try{
+    await runTransaction(db, async (tx) => {
+      const betSnap = await tx.get(betRef);
+      if(!betSnap.exists()) throw new Error('This wager no longer exists.');
+      const bet = betSnap.data();
+      if(bet.status !== 'open') throw new Error('This wager is no longer open.');
+      if(bet.closesAt && bet.closesAt.toMillis() < Date.now()) throw new Error('This wager has closed.');
+      if(!bet.outcomes || !(outcomeId in bet.outcomes)) throw new Error('That outcome no longer exists.');
+
+      const userSnap = await tx.get(userRef);
+      const cash = userSnap.exists() ? Number(userSnap.data().cash || 0) : 0;
+      if(amount > cash) throw new Error('Not enough cash. Need ' + fmtMoney(amount) + ', have ' + fmtMoney(cash) + '.');
+
+      const pool = { ...(bet.pool || {}) };
+      pool[outcomeId] = Number(pool[outcomeId] || 0) + amount;
+      const totalPool = Number(bet.totalPool || 0) + amount;
+
+      tx.set(wagerRef, { uid: state.uid, betId, outcomeId, amount, placedAt: serverTimestamp(), paid: false });
+      tx.update(betRef, { pool, totalPool, lastWagerId: wagerRef.id });
+      tx.update(userRef, { cash: cash - amount, lastWagerId: wagerRef.id });
+    });
+    msgEl.className = 'msg ok'; msgEl.textContent = 'Wagered ' + fmtMoney(amount) + ' on ' + outcomeLabel(state.bets.find(b=>b.id===betId), outcomeId) + '.';
+  }catch(err){
+    msgEl.className = 'msg err'; msgEl.textContent = 'Wager failed: ' + err.message;
+  }
+}
+
+// Admin-only. Freezes wagering without declaring an outcome — for "the
+// event already happened/started, stop taking bets, but we don't know the
+// result yet." Resolve or void can both still happen from here later.
+async function adminCloseBet(betId, msgEl){
+  if(!confirm('Stop taking new wagers on this bet? You can still resolve it (pay winners) or void it (refund everyone) afterward.')) return;
+  try{
+    await updateDoc(doc(db, 'bets', betId), { status: 'closed' });
+  }catch(err){
+    if(msgEl){ msgEl.className = 'msg err'; msgEl.textContent = 'Could not close: ' + err.message; }
+    else alert('Could not close: ' + err.message);
+  }
+}
+
+// Admin-only. Voids the bet instead of resolving it — nobody wins, use
+// refundBet() afterward to give everyone their stake back. This replaces
+// the old creator-facing "cancel my own bet" feature entirely: letting
+// whoever posted a bet unilaterally kill it (say, once it's clearly going
+// against them) isn't something a real betting feature should allow.
+async function adminVoidBet(betId, msgEl){
+  if(!confirm("Void this bet? No winner will be declared — use \"Refund wagers\" afterward to return everyone's stake.")) return;
+  try{
+    await updateDoc(doc(db, 'bets', betId), { status: 'cancelled' });
+  }catch(err){
+    if(msgEl){ msgEl.className = 'msg err'; msgEl.textContent = 'Could not void: ' + err.message; }
+    else alert('Could not void: ' + err.message);
+  }
+}
+
+// Admin-only. Sets status + winningOutcomeId together — the exact pair
+// bets/{betId}'s isAdmin() update rule requires, nothing else changes.
+// This only records a winner; it moves no cash yet — run payoutBet()
+// (the "Pay out winners" button that appears once a bet is resolved)
+// as a separate, deliberate second step.
+async function resolveBet(betId, winningOutcomeId, msgEl){
+  const bet = state.bets.find(b => b.id === betId);
+  if(!winningOutcomeId){ msgEl.className='msg err'; msgEl.textContent='Pick the winning outcome.'; return; }
+  const label = bet ? outcomeLabel(bet, winningOutcomeId) : winningOutcomeId;
+  if(!confirm('Mark "' + label + '" as the winner of "' + (bet?bet.title:'') + '"? This does not pay anyone out yet — use "Pay out winners" afterward.')) return;
+  try{
+    await updateDoc(doc(db, 'bets', betId), { status: 'resolved', winningOutcomeId });
+    msgEl.className = 'msg ok'; msgEl.textContent = 'Marked as resolved. Use "Pay out winners" to distribute the pool.';
+  }catch(err){
+    msgEl.className = 'msg err'; msgEl.textContent = 'Could not resolve: ' + err.message;
+  }
+}
+
+// Admin-only. Pays every winning wager its pari-mutuel share of the whole
+// pool: (this wager's amount / winning outcome's total) x total pool.
+// Each winner is paid in its own small transaction — marking that ONE
+// wager doc paid and crediting that ONE user's cash together — so one
+// failure (a network hiccup, someone's doc changing mid-run) can't roll
+// back or block anyone else's payout, and re-running this after a partial
+// failure just skips whoever's already marked paid instead of double-
+// paying them (enforced both client-side via the paid check below, and
+// server-side by the wagers/{wagerId} update rule itself).
+async function payoutBet(betId, msgEl){
+  const betRef = doc(db, 'bets', betId);
+  const betSnap = await getDoc(betRef);
+  if(!betSnap.exists()){ msgEl.className='msg err'; msgEl.textContent='Wager not found.'; return; }
+  const bet = betSnap.data();
+  if(bet.status !== 'resolved' || !bet.winningOutcomeId){
+    msgEl.className='msg err'; msgEl.textContent='Resolve the wager (pick a winner) before paying out.'; return;
+  }
+  const winningPool = Number((bet.pool||{})[bet.winningOutcomeId] || 0);
+  const totalPool = Number(bet.totalPool || 0);
+  if(winningPool <= 0){
+    msgEl.className='msg ok'; msgEl.textContent = 'No one wagered on the winning outcome — nothing to pay out.';
+    return;
+  }
+
+  const wagersSnap = await getDocs(query(collection(db, 'wagers'), where('betId', '==', betId)));
+  const winners = wagersSnap.docs
+    .map(d => ({ id: d.id, ...d.data() }))
+    .filter(w => w.outcomeId === bet.winningOutcomeId && !w.paid);
+
+  if(winners.length === 0){
+    msgEl.className='msg ok'; msgEl.textContent = 'Already fully paid out.';
+    return;
+  }
+
+  msgEl.className = 'msg'; msgEl.textContent = 'Paying ' + winners.length + ' winner' + (winners.length===1?'':'s') + '...';
+  let paidCount = 0, failCount = 0;
+  for(const w of winners){
+    const payout = Math.round((w.amount * totalPool / winningPool) * 100) / 100;
+    const wagerRef = doc(db, 'wagers', w.id);
+    const winnerRef = doc(db, 'users', w.uid);
+    try{
+      await runTransaction(db, async (tx) => {
+        const winnerSnap = await tx.get(winnerRef);
+        const cash = winnerSnap.exists() ? Number(winnerSnap.data().cash || 0) : 0;
+        tx.update(wagerRef, { paid: true, payout });
+        tx.update(winnerRef, { cash: cash + payout, lastPayoutId: w.id });
+      });
+      paidCount++;
+    }catch(err){
+      failCount++;
+      console.error('Payout failed for wager', w.id, err);
+    }
+  }
+  msgEl.className = failCount ? 'msg err' : 'msg ok';
+  msgEl.textContent = 'Paid ' + paidCount + ' winner' + (paidCount===1?'':'s') + '.' + (failCount ? (' ' + failCount + ' failed — check console, safe to retry.') : '');
+}
+
+// Admin-only. Void-bet equivalent of payoutBet(): instead of splitting the
+// pool among winners, every single wager (any outcome — there's no
+// "winner" on a voided bet) gets its exact original amount back. Same
+// one-transaction-per-wager shape as payoutBet() for the same reason: one
+// failure can't block or double-refund anyone else, and re-running after
+// a partial failure just picks up whoever isn't marked paid yet.
+async function refundBet(betId, msgEl){
+  const betRef = doc(db, 'bets', betId);
+  const betSnap = await getDoc(betRef);
+  if(!betSnap.exists()){ msgEl.className='msg err'; msgEl.textContent='Wager not found.'; return; }
+  const bet = betSnap.data();
+  if(bet.status !== 'cancelled'){
+    msgEl.className='msg err'; msgEl.textContent='Void the wager before refunding it.'; return;
+  }
+
+  const wagersSnap = await getDocs(query(collection(db, 'wagers'), where('betId', '==', betId)));
+  const toRefund = wagersSnap.docs
+    .map(d => ({ id: d.id, ...d.data() }))
+    .filter(w => !w.paid);
+
+  if(toRefund.length === 0){
+    msgEl.className='msg ok'; msgEl.textContent = 'Already fully refunded.';
+    return;
+  }
+
+  msgEl.className = 'msg'; msgEl.textContent = 'Refunding ' + toRefund.length + ' wager' + (toRefund.length===1?'':'s') + '...';
+  let refundedCount = 0, failCount = 0;
+  for(const w of toRefund){
+    const wagerRef = doc(db, 'wagers', w.id);
+    const bettorRef = doc(db, 'users', w.uid);
+    try{
+      await runTransaction(db, async (tx) => {
+        const bettorSnap = await tx.get(bettorRef);
+        const cash = bettorSnap.exists() ? Number(bettorSnap.data().cash || 0) : 0;
+        tx.update(wagerRef, { paid: true, payout: w.amount });
+        tx.update(bettorRef, { cash: cash + w.amount, lastPayoutId: w.id });
+      });
+      refundedCount++;
+    }catch(err){
+      failCount++;
+      console.error('Refund failed for wager', w.id, err);
+    }
+  }
+  msgEl.className = failCount ? 'msg err' : 'msg ok';
+  msgEl.textContent = 'Refunded ' + refundedCount + ' wager' + (refundedCount===1?'':'s') + '.' + (failCount ? (' ' + failCount + ' failed — check console, safe to retry.') : '');
+}
+
+// Admin-only. Removes a voided bet from history entirely. Warns (but
+// doesn't block) if any wager on it was never refunded — the rule itself
+// can't verify that (no way to check "no matching docs exist" from a
+// security rule the way a query can), so this check is a client-side
+// courtesy, not an enforced guarantee.
+async function deleteBet(betId, msgEl){
+  let unpaidCount = 0;
+  try{
+    const wagersSnap = await getDocs(query(collection(db, 'wagers'), where('betId', '==', betId)));
+    unpaidCount = wagersSnap.docs.filter(d => !d.data().paid).length;
+  }catch(e){ /* if this check fails, still let admin decide via the generic confirm below */ }
+
+  const warning = unpaidCount > 0
+    ? unpaidCount + ' wager' + (unpaidCount===1?' was':'s were') + ' never refunded on this bet — deleting now means that fake-cash stays lost permanently. Delete anyway?'
+    : 'Delete this cancelled wager permanently? This cannot be undone.';
+  if(!confirm(warning)) return;
+
+  try{
+    await deleteDoc(doc(db, 'bets', betId));
+    state.historicalBets = state.historicalBets.filter(b => b.id !== betId);
+    renderBets();
+  }catch(err){
+    if(msgEl){ msgEl.className = 'msg err'; msgEl.textContent = 'Could not delete: ' + err.message; }
+    else alert('Could not delete: ' + err.message);
+  }
+}
+
+function renderBets(){
+  const body = document.getElementById('betsBody');
+  const sub = document.getElementById('betsSub');
+  if(!body || !sub) return;
+
+  const openBets = state.bets.filter(b => b.status === 'open');
+  sub.textContent = openBets.length + ' open';
+
+  // "Open" here means "still active" (open OR closed-awaiting-resolution)
+  // — a closed bet still needs eyes on it (the admin still has to resolve
+  // or void it), it's just not accepting new wagers anymore. Only fully
+  // settled bets move to the historical/resolved-cancelled view.
+  const visible = (state.betFilter === 'open' ? state.bets : state.historicalBets)
+    .sort((a,b) => (b.createdAt?.seconds||0) - (a.createdAt?.seconds||0));
+
+  if(visible.length === 0){
+    body.innerHTML = '<div class="empty-state">' + (state.betFilter==='open' ? 'No open wagers right now — post one.' : (historicalBetsLoaded ? 'No resolved or cancelled wagers yet.' : 'Loading…')) + '</div>';
+    return;
+  }
+
+  body.innerHTML = visible.map(bet => renderBetCard(bet)).join('');
+
+  body.querySelectorAll('[data-place-wager]').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const card = btn.closest('.bet-card');
+      const betId = btn.dataset.placeWager;
+      const outcomeId = card.querySelector('[data-outcome-select]').value;
+      const amount = card.querySelector('[data-wager-amount]').value;
+      const msgEl = card.querySelector('[data-wager-msg]');
+      if(!outcomeId){ msgEl.className='msg err'; msgEl.textContent='Choose an outcome.'; return; }
+      placeWager(betId, outcomeId, amount, msgEl);
+    });
+  });
+  body.querySelectorAll('[data-close-bet]').forEach(btn => {
+    btn.addEventListener('click', () => adminCloseBet(btn.dataset.closeBet));
+  });
+  body.querySelectorAll('[data-void-bet]').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const card = btn.closest('.bet-card');
+      const msgEl = card.querySelector('[data-resolve-msg]');
+      adminVoidBet(btn.dataset.voidBet, msgEl);
+    });
+  });
+  body.querySelectorAll('[data-wager-amount]').forEach(input => {
+    input.addEventListener('input', () => updateWagerQuote(input.closest('.bet-card')));
+  });
+  body.querySelectorAll('[data-outcome-select]').forEach(sel => {
+    sel.addEventListener('change', () => updateWagerQuote(sel.closest('.bet-card')));
+  });
+  body.querySelectorAll('[data-resolve-bet]').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const card = btn.closest('.bet-card');
+      const winningOutcomeId = card.querySelector('[data-resolve-select]').value;
+      const msgEl = card.querySelector('[data-resolve-msg]');
+      resolveBet(btn.dataset.resolveBet, winningOutcomeId, msgEl);
+    });
+  });
+  body.querySelectorAll('[data-payout-bet]').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const card = btn.closest('.bet-card');
+      const msgEl = card.querySelector('[data-payout-msg]');
+      btn.disabled = true;
+      payoutBet(btn.dataset.payoutBet, msgEl).finally(() => { btn.disabled = false; });
+    });
+  });
+  body.querySelectorAll('[data-refund-bet]').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const card = btn.closest('.bet-card');
+      const msgEl = card.querySelector('[data-refund-msg]');
+      btn.disabled = true;
+      refundBet(btn.dataset.refundBet, msgEl).finally(() => { btn.disabled = false; });
+    });
+  });
+  body.querySelectorAll('[data-delete-bet]').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const card = btn.closest('.bet-card');
+      const msgEl = card.querySelector('[data-refund-msg]');
+      deleteBet(btn.dataset.deleteBet, msgEl);
+    });
+  });
+}
+
+// Live "if this outcome wins, you'd get roughly $X back" preview, using
+// the CURRENT pool plus the amount being typed — same spirit as the
+// premium-box preview on the options panel. Purely informational: the
+// real payout (whenever an admin resolves the bet) depends on the pool at
+// resolution time, which will keep moving as more people wager.
+function updateWagerQuote(card){
+  const betId = card.dataset.betid;
+  const bet = state.bets.find(b => b.id === betId);
+  const quoteEl = card.querySelector('[data-wager-quote]');
+  if(!bet || !quoteEl) return;
+  const outcomeId = card.querySelector('[data-outcome-select]').value;
+  const amount = parseFloat(card.querySelector('[data-wager-amount]').value);
+  if(!outcomeId || !amount || amount <= 0){ quoteEl.innerHTML = ''; return; }
+  const currentOutcomePool = Number((bet.pool||{})[outcomeId] || 0);
+  const projectedPool = currentOutcomePool + amount;
+  const projectedTotal = Number(bet.totalPool||0) + amount;
+  const payout = (amount / projectedPool) * projectedTotal;
+  quoteEl.innerHTML = 'If <b>' + escapeHtml(outcomeLabel(bet, outcomeId)) + '</b> wins, you\'d get back roughly <b>' + fmtMoney(payout) + '</b> at today\'s pool — shifts as more people wager.';
+}
+
+function relativeTime(ms){
+  const diff = ms - Date.now();
+  const abs = Math.abs(diff);
+  const mins = Math.round(abs / 60000);
+  const hours = Math.round(abs / 3600000);
+  const days = Math.round(abs / 86400000);
+  let label;
+  if(mins < 60) label = mins + (mins===1?' minute':' minutes');
+  else if(hours < 24) label = hours + (hours===1?' hour':' hours');
+  else label = days + (days===1?' day':' days');
+  return diff >= 0 ? ('in ' + label) : (label + ' ago');
+}
+
+function renderBetCard(bet){
+  const outcomeIds = Object.keys(bet.outcomes || {});
+  const total = Number(bet.totalPool || 0);
+  const closesAtMs = bet.closesAt ? bet.closesAt.toMillis() : null;
+  const isClosedByDeadline = closesAtMs !== null && closesAtMs < Date.now();
+  const isOpen = bet.status === 'open' && !isClosedByDeadline;
+  // 'closed' covers both an admin's manual close AND the deadline passing
+  // on its own — either way, no new wagers, outcome not decided yet.
+  const statusLabel = bet.status === 'resolved' ? 'resolved'
+    : bet.status === 'cancelled' ? 'cancelled'
+    : (bet.status === 'closed' || isClosedByDeadline) ? 'closed'
+    : 'open';
+  // Admin can still act (resolve or void) from 'open' or 'closed' — see
+  // the matching bets/{betId} rules.
+  const canAdminAct = state.isAdmin && (bet.status === 'open' || bet.status === 'closed');
+
+  const outcomesHtml = outcomeIds.map(oid => {
+    const amt = Number((bet.pool||{})[oid] || 0);
+    const pct = total > 0 ? (amt/total*100) : 0;
+    const isWinner = bet.winningOutcomeId === oid;
+    return '<div class="outcome-row' + (isWinner?' winner':'') + '">'
+      + '<div class="outcome-label-line"><span class="name">' + escapeHtml(outcomeLabel(bet,oid)) + '</span><span class="odds">' + fmtMoney(amt) + ' · ' + pct.toFixed(0) + '%</span></div>'
+      + '<div class="outcome-bar"><div class="fill" style="width:' + pct.toFixed(1) + '%; background:' + classColor(oid) + ';"></div></div>'
+      + '</div>';
+  }).join('');
+
+  const closesLine = closesAtMs
+    ? '<div class="bet-closes">' + (isClosedByDeadline ? 'Closed ' : 'Closes ') + relativeTime(closesAtMs) + '</div>'
+    : '';
+
+  const wagerControls = isOpen ? (
+    '<div class="wager-controls">'
+      + '<select data-outcome-select><option value="">— pick an outcome —</option>'
+      + outcomeIds.map(oid => '<option value="'+escapeHtml(oid)+'">'+escapeHtml(outcomeLabel(bet,oid))+'</option>').join('')
+      + '</select>'
+      + '<input type="number" min="1" step="1" placeholder="Amount" data-wager-amount>'
+      + '<button data-place-wager="'+bet.id+'">Wager</button>'
+      + '</div>'
+      + '<div class="wager-quote" data-wager-quote></div>'
+      + '<div class="msg" data-wager-msg></div>'
+  ) : (statusLabel === 'closed' ? '<div class="type-desc">Betting closed — waiting on an admin to resolve or void it.</div>' : '');
+
+  // Admin-only: freezes wagering without deciding the outcome yet. Only
+  // makes sense from 'open' — once it's already 'closed' there's nothing
+  // left for this button to do.
+  const closeBlock = (bet.status === 'open' && state.isAdmin) ? (
+    '<button class="dismiss-btn" data-close-bet="'+bet.id+'">Close betting</button>'
+  ) : '';
+
+  // Admin-only: marks a winner (status + winningOutcomeId together, the
+  // only combination bets/{betId}'s admin update rule allows). This does
+  // NOT move any money — it just records who won. "Pay out winners"
+  // (shown once resolved) is the separate, deliberate step that does.
+  const resolveBlock = canAdminAct ? (
+    '<div class="admin-resolve">'
+      + '<div class="label">Admin — declare winner</div>'
+      + '<select data-resolve-select><option value="">— pick the winning outcome —</option>'
+      + outcomeIds.map(oid => '<option value="'+escapeHtml(oid)+'">'+escapeHtml(outcomeLabel(bet,oid))+'</option>').join('')
+      + '</select>'
+      + '<button data-resolve-bet="'+bet.id+'">Resolve wager</button>'
+      + '<button class="dismiss-btn" data-void-bet="'+bet.id+'">Void instead (refund everyone)</button>'
+      + '<div class="msg" data-resolve-msg></div>'
+      + '</div>'
+  ) : '';
+
+  const payoutBlock = (bet.status === 'resolved' && state.isAdmin) ? (
+    '<div class="admin-resolve">'
+      + '<div class="label">Admin — payout</div>'
+      + '<button data-payout-bet="'+bet.id+'">Pay out winners</button>'
+      + '<div class="msg" data-payout-msg></div>'
+      + '</div>'
+  ) : '';
+
+  const refundBlock = (bet.status === 'cancelled' && state.isAdmin) ? (
+    '<div class="admin-resolve">'
+      + '<div class="label">Admin — refund</div>'
+      + '<button data-refund-bet="'+bet.id+'">Refund wagers</button>'
+      + '<button class="dismiss-btn" data-delete-bet="'+bet.id+'">Delete from history</button>'
+      + '<div class="msg" data-refund-msg></div>'
+      + '</div>'
+  ) : '';
+
+  return '<div class="bet-card" data-betid="'+bet.id+'">'
+    + '<div class="bet-top"><span class="bet-title">'+escapeHtml(bet.title||'Untitled wager')+'</span><span class="bet-status-tag '+statusLabel+'">'+statusLabel+'</span></div>'
+    + '<div class="bet-meta">Posted by <b>'+escapeHtml(bet.creatorUsername||'?')+'</b> · Pool: <b>'+fmtMoney(total)+'</b></div>'
+    + closesLine
+    + outcomesHtml
+    + wagerControls
+    + closeBlock
+    + resolveBlock
+    + payoutBlock
+    + refundBlock
+    + '</div>';
+}
+
+function renderMyWagers(){
+  const body = document.getElementById('myWagersBody');
+  const sub = document.getElementById('myWagersSub');
+  if(!body || !sub) return;
+  sub.textContent = state.myWagers.length + ' placed';
+  if(state.myWagers.length === 0){
+    body.innerHTML = '<div class="empty-state">You haven\'t placed a wager yet.</div>';
+    return;
+  }
+
+  // Any wager whose bet isn't in the live active set (i.e. it's resolved
+  // or cancelled) and isn't cached yet gets fetched once, in the
+  // background — render now with what we already have, then re-render
+  // when those come in rather than blocking the whole view on them.
+  const missing = state.myWagers
+    .map(w => w.betId)
+    .filter(betId => !state.bets.find(b => b.id === betId) && !oldBetsCache[betId]);
+  if(missing.length){
+    Promise.all([...new Set(missing)].map(resolveBetInfo)).then(() => renderMyWagers());
+  }
+
+  const sorted = [...state.myWagers].sort((a,b) => (b.placedAt?.seconds||0) - (a.placedAt?.seconds||0));
+  body.innerHTML = sorted.map(w => {
+    const bet = state.bets.find(b => b.id === w.betId) || oldBetsCache[w.betId];
+    const title = bet ? bet.title : '(wager no longer loaded)';
+    const label = bet ? outcomeLabel(bet, w.outcomeId) : w.outcomeId;
+    let resultTag = '<span class="tag open">PENDING</span>';
+    if(bet && bet.status === 'cancelled') resultTag = '<span class="tag" style="color:var(--text-dim); border-color:var(--text-dim);">CANCELLED</span>';
+    else if(bet && bet.winningOutcomeId){
+      resultTag = bet.winningOutcomeId === w.outcomeId ? '<span class="tag win">WON</span>' : '<span class="tag loss">LOST</span>';
+    }
+    const payoutLine = w.paid
+      ? '<div class="detail"><span>'+(bet && bet.status === 'cancelled' ? 'Refunded' : 'Paid out')+'</span><b>'+fmtMoney(w.payout)+'</b></div>'
+      : (bet && bet.status === 'resolved' && bet.winningOutcomeId === w.outcomeId
+          ? '<div class="detail"><span>Payout</span><b>pending admin payout</b></div>'
+          : (bet && bet.status === 'cancelled'
+              ? '<div class="detail"><span>Refund</span><b>pending admin refund</b></div>' : ''));
+    return '<div class="pos-card">'
+      + '<div class="top"><span class="sym">'+escapeHtml(title)+'</span>'+resultTag+'</div>'
+      + '<div class="detail"><span>Outcome</span><b>'+escapeHtml(label)+'</b></div>'
+      + '<div class="detail"><span>Amount wagered</span><b>'+fmtMoney(w.amount)+'</b></div>'
+      + payoutLine
+      + '</div>';
+  }).join('');
+}
+
+document.getElementById('addOutcomeBtn').addEventListener('click', () => {
+  const wrap = document.getElementById('betOutcomeInputs');
+  const row = document.createElement('div');
+  row.className = 'outcome-input-row';
+  row.innerHTML = '<input type="text" data-outcome-input maxlength="60" placeholder="Outcome ' + String.fromCharCode(65 + wrap.children.length) + '"><button class="remove-outcome-btn" tabindex="-1">×</button>';
+  wrap.appendChild(row);
+});
+document.getElementById('betOutcomeInputs').addEventListener('click', (e) => {
+  const btn = e.target.closest('.remove-outcome-btn');
+  if(!btn) return;
+  const wrap = document.getElementById('betOutcomeInputs');
+  if(wrap.children.length <= 2) return; // always keep at least 2 outcome rows
+  btn.closest('.outcome-input-row').remove();
+});
+document.getElementById('createBetBtn').addEventListener('click', createBet);
+// Resolved/cancelled bets are done changing once they're fully settled —
+// no live listener needed. Fetched once per session, the first time
+// someone actually looks at the "resolved/cancelled" filter, not kept
+// running the rest of the time.
+let historicalBetsLoaded = false;
+async function loadHistoricalBetsOnce(){
+  if(historicalBetsLoaded) return;
+  historicalBetsLoaded = true;
+  try{
+    const snap = await getDocs(query(collection(db, 'bets'), where('status', 'in', ['resolved','cancelled'])));
+    state.historicalBets = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+  }catch(e){
+    historicalBetsLoaded = false; // let a retry happen on the next click
+  }
+  renderBets();
+}
+
+document.getElementById('betFilters').querySelectorAll('button').forEach(btn => btn.addEventListener('click', () => {
+  state.betFilter = btn.dataset.filter;
+  document.getElementById('betFilters').querySelectorAll('button').forEach(b=>b.classList.remove('active'));
+  btn.classList.add('active');
+  if(state.betFilter !== 'open') loadHistoricalBetsOnce();
+  renderBets();
+}));
 
 function statMeanStd(rows, key){
   const vals = rows.map(r => (r.stats ? r.stats[key] : r[key]) || 0);
@@ -1192,10 +1992,19 @@ function weightedComposite(lookups, prof, s, weights){
 // their current Elo against today's population-wide Elo distribution. That
 // last step is what makes this non-compounding: it never looks at any
 // previous priceHistory entry, only at current Elo standing.
-function recomputeMarket(){
+// Pure version of the market computation: takes an explicit reports list
+// instead of always reading state.reports, and returns the result instead
+// of assigning it to state. This lets submitReport() compute the exact
+// same, single-implementation price snapshot for a report that hasn't
+// been committed yet (so it can be published as part of the SAME
+// transaction as the report itself — see submitReport() below), while
+// recomputeMarket() below stays the normal live-rendering entry point.
+// There is only one pricing algorithm anywhere in this file; both callers
+// run it, nothing duplicates or re-derives it.
+function computeMarketFromReports(reportsList){
   const ratings = {};  // name -> {elo, battles, profession}
   const players = {};  // name -> {name, faction, profession, history, priceHistory}
-  const sortedReports = [...state.reports].sort((a,b)=>a.day-b.day);
+  const sortedReports = [...reportsList].sort((a,b)=>a.day-b.day);
 
   sortedReports.forEach(rep => {
     const rows = rep.players;
@@ -1209,12 +2018,6 @@ function recomputeMarket(){
       players[r.name].history.push(Object.assign({ day: rep.day }, r));
     });
 
-    // MMR/Elo: primarily driven by TEAM RESULT (did your faction win this
-    // battle — see teamCombatScore/factionGroups above), scaled by a bounded
-    // PERFORMANCE MULTIPLIER built from the existing role-relative composite
-    // (weightedComposite — using MEDIC_WEIGHTS or DPS_WEIGHTS depending on
-    // that row's own class this report, see eloWeightsFor above). Needs at
-    // least 2 participants to mean anything.
     if(rows.length >= 2){
       const lookups = buildStatLookups(rows, r => r.profession);
       const composite = {};
@@ -1233,17 +2036,6 @@ function recomputeMarket(){
         const avgEloA = rowsA.reduce((s,r)=>s+ratings[r.name].elo,0) / rowsA.length;
         const avgEloB = rowsB.reduce((s,r)=>s+ratings[r.name].elo,0) / rowsB.length;
         const mov = marginMultiplier(scoreA, scoreB, rowsA, rowsB);
-        // Real-Elo expectation: each player's own rating vs the OPPOSING
-        // team's average, not team-average-vs-team-average. Previously every
-        // player on a side got the same shared deltaA/deltaB regardless of
-        // their own rating, so a 3700-rated player kept getting scored as if
-        // they were exactly as likely to win as their ~1500 teammates —
-        // the "surprise" of winning never shrank as they pulled ahead, and
-        // nothing pulled them back down. Now a player who's already well
-        // above the opposing average is EXPECTED to win, so the same win
-        // yields a shrinking delta as their rating climbs, and a loss costs
-        // them more the higher they're sitting — the self-correcting
-        // behavior a real Elo ladder relies on.
         rowsA.forEach(r => {
           const expected = 1 / (1 + Math.pow(10, (avgEloB - ratings[r.name].elo) / 400));
           teamDeltas[r.name] = TEAM_ELO_K * (actualA - expected) * mov;
@@ -1266,10 +2058,6 @@ function recomputeMarket(){
           ratings[r.name].battles += 1;
         });
       } else {
-        // Bad/missing faction data or more than two sides — no clean team
-        // result to score. Fall back to the original all-vs-all individual
-        // Elo so a malformed report still doesn't corrupt ratings, it just
-        // doesn't produce a win/loss record.
         const n = rows.length;
         const deltas = {};
         rows.forEach(a => {
@@ -1286,9 +2074,6 @@ function recomputeMarket(){
       }
     }
 
-    // Re-price EVERYONE known so far off today's Elo RANKING — including
-    // players who sat this report out, since their rank still shifts
-    // relative to everyone else's. No dependence on yesterday's price.
     const allNames = Object.keys(ratings);
     const todaysPrices = pricesFromEloSnapshot(ratings, allNames);
     allNames.forEach(name => {
@@ -1296,6 +2081,11 @@ function recomputeMarket(){
     });
   });
 
+  return { players, ratings };
+}
+
+function recomputeMarket(){
+  const { players, ratings } = computeMarketFromReports(state.reports);
   state.players = players;
   state.elo = ratings;
 }
@@ -1681,7 +2471,7 @@ async function closePositionEarly(posId){
 }
 
 function escapeHtml(s){ return String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
-const CLASS_PALETTE = ['#4dff9e','#5db8ff','#ffb84d','#ff5d5d','#c792ea','#7fd1ff','#ffe066','#8fd6a8'];
+const CLASS_PALETTE = ['#7fe6da','#5db0e6','#e0b34d','#ff6b5d','#c792ea','#7fd1ff','#ffe066','#8fd6c8'];
 function classColor(cls){
   const s = String(cls||'Unknown');
   let hash = 0;
@@ -1694,7 +2484,7 @@ let chart = null;
 function renderChart(){
   const ctx = document.getElementById('priceChart').getContext('2d');
   const symbols = Array.from(state.selectedSymbols);
-  const palette = ['#4dff9e','#5db8ff','#ffb84d','#ff5d5d','#c792ea','#7fd1ff','#ffe066'];
+  const palette = ['#7fe6da','#5db0e6','#e0b34d','#ff6b5d','#c792ea','#7fd1ff','#ffe066'];
   const datasets = symbols.map((sym,i) => ({
     label: sym,
     data: state.players[sym] ? state.players[sym].priceHistory.map(h=>({x:h.day,y:h.price})) : [],
@@ -1703,8 +2493,8 @@ function renderChart(){
   if(chart) chart.destroy();
   chart = new Chart(ctx, { type:'line', data:{datasets}, options:{
     responsive:true, interaction:{mode:'nearest',intersect:false},
-    scales:{ x:{type:'linear',ticks:{color:'#7fa08c',stepSize:1,callback:v=>'Day '+v},grid:{color:'#1b271f'},title:{display:true,text:'Trading day',color:'#7fa08c'}},
-             y:{ticks:{color:'#7fa08c'},grid:{color:'#1b271f'}} },
+    scales:{ x:{type:'linear',ticks:{color:'#93bdb9',stepSize:1,callback:v=>'Day '+v},grid:{color:'#2c4d4f'},title:{display:true,text:'Trading day',color:'#93bdb9'}},
+             y:{ticks:{color:'#93bdb9'},grid:{color:'#2c4d4f'}} },
     plugins:{ legend:{labels:{color:'#d7ecdf'}} }
   }});
 }
@@ -1716,7 +2506,7 @@ function sparkline(priceHistory){
   const min=Math.min(...prices), max=Math.max(...prices), range=(max-min)||1;
   const step = w/(prices.length-1);
   const pts = prices.map((p,i)=>(i*step).toFixed(1)+','+(h-((p-min)/range)*h).toFixed(1)).join(' ');
-  const color = prices[prices.length-1] >= prices[0] ? '#4dff9e' : '#ff5d5d';
+  const color = prices[prices.length-1] >= prices[0] ? '#7fe6da' : '#ff6b5d';
   return '<svg class="spark" viewBox="0 0 ' + w + ' ' + h + '"><polyline points="' + pts + '" fill="none" stroke="' + color + '" stroke-width="1.6"/></svg>';
 }
 
@@ -2068,7 +2858,7 @@ function renderStats(){
 }
 
 function renderAll(){
-  renderTicker(); renderPremiumPreview(); renderPositions(); renderAssets(); renderHistory(); renderStats(); renderChart(); renderEloTab();
+  renderTicker(); renderPremiumPreview(); renderPositions(); renderAssets(); renderHistory(); renderStats(); renderChart(); renderEloTab(); renderBets(); renderMyWagers();
 }
 
 function renderEloTab(){
@@ -2131,7 +2921,7 @@ function renderEloChart(entries){
   const sorted = [...entries].sort((a,b)=>b.elo-a.elo);
   const labels = sorted.map(e=>e.name);
   const data = sorted.map(e=>Math.round(e.elo));
-  const colors = data.map(v => v>=ELO_START ? '#4dff9e' : '#ff5d5d');
+  const colors = data.map(v => v>=ELO_START ? '#7fe6da' : '#ff6b5d');
   if(eloChart) eloChart.destroy();
   eloChart = new Chart(ctx, {
     type:'bar',
@@ -2147,8 +2937,8 @@ function renderEloChart(entries){
       onHover:(evt, elements) => { evt.native.target.style.cursor = elements.length ? 'pointer' : 'default'; },
       plugins:{ legend:{ display:false } },
       scales:{
-        x:{ ticks:{ color:'#7fa08c' }, grid:{ color:'#1b271f' } },
-        y:{ ticks:{ color:'#7fa08c' }, grid:{ color:'#1b271f' } }
+        x:{ ticks:{ color:'#93bdb9' }, grid:{ color:'#2c4d4f' } },
+        y:{ ticks:{ color:'#93bdb9' }, grid:{ color:'#2c4d4f' } }
       }
     }
   });
@@ -2199,10 +2989,26 @@ function renderClassBreakdownHtml(name){
     + '</div>';
 }
 
-async function renderNetworthTab(){
+// Full board is N reads (one per trader) + one more read PER TRADER for
+// their positions — the priciest single screen in the site by far. Was
+// being fully re-fetched on every single click of the Net Worth tab, so a
+// few people idly flipping between tabs could rack up real read volume
+// for a board that barely changes minute to minute. Cached for 2 minutes;
+// "Refresh now" forces an immediate re-fetch when you actually want the
+// latest numbers (e.g. right after a big trade).
+let networthCache = null; // { traders, fetchedAt }
+const NETWORTH_CACHE_MS = 120000;
+
+async function renderNetworthTab(force){
   const summaryEl = document.getElementById('networthSummary');
   const bodyEl = document.getElementById('networthBody');
   if(!summaryEl || !bodyEl) return;
+
+  if(!force && networthCache && (Date.now() - networthCache.fetchedAt) < NETWORTH_CACHE_MS){
+    paintNetworthTab(networthCache.traders, networthCache.fetchedAt);
+    return;
+  }
+
   bodyEl.innerHTML = '<tr><td colspan="6" class="empty-state">Loading traders…</td></tr>';
   let snap;
   try{
@@ -2246,13 +3052,25 @@ async function renderNetworthTab(){
   }));
 
   traders.sort((a,b) => b.netWorth - a.netWorth);
+  networthCache = { traders, fetchedAt: Date.now() };
+  paintNetworthTab(traders, networthCache.fetchedAt);
+}
+
+function paintNetworthTab(traders, fetchedAt){
+  const summaryEl = document.getElementById('networthSummary');
+  const bodyEl = document.getElementById('networthBody');
   const totalNet = traders.reduce((s,t)=>s+t.netWorth,0);
   const avgNet = totalNet / traders.length;
+  const ageLabel = relativeTime(fetchedAt).replace('in ', '').replace(' ago','') + ' ago';
   summaryEl.innerHTML =
     '<div class="stat"><div class="label">TRADERS</div><div class="value">' + traders.length + '</div></div>'
     + '<div class="stat"><div class="label">RICHEST</div><div class="value elo-pos">' + escapeHtml(traders[0].username) + ' · ' + fmtMoney(traders[0].netWorth) + '</div></div>'
     + '<div class="stat"><div class="label">POOREST</div><div class="value elo-neg">' + escapeHtml(traders[traders.length-1].username) + ' · ' + fmtMoney(traders[traders.length-1].netWorth) + '</div></div>'
-    + '<div class="stat"><div class="label">AVERAGE NET WORTH</div><div class="value">' + fmtMoney(avgNet) + '</div></div>';
+    + '<div class="stat"><div class="label">AVERAGE NET WORTH</div><div class="value">' + fmtMoney(avgNet) + '</div></div>'
+    + '<div class="stat"><div class="label">UPDATED</div><div class="value" style="font-weight:normal;">' + ageLabel + ' · <a href="#" id="networthRefreshLink" style="color:var(--phosphor);">refresh</a></div></div>';
+
+  const refreshLink = document.getElementById('networthRefreshLink');
+  if(refreshLink) refreshLink.addEventListener('click', (e) => { e.preventDefault(); renderNetworthTab(true); });
 
   bodyEl.innerHTML = traders.map((t,i) => {
     const isYou = t.uid === state.uid;
@@ -2937,11 +3755,11 @@ document.getElementById('optStrikeCustom').addEventListener('input', () => {
   renderPremiumPreview();
 });
 
-const navFloor = document.getElementById('navFloor'), navAssets = document.getElementById('navAssets'), navHistory = document.getElementById('navHistory'), navElo = document.getElementById('navElo'), navNetworth = document.getElementById('navNetworth');
-const viewFloor = document.getElementById('viewTradingFloor'), viewAssets = document.getElementById('viewAssets'), viewHistory = document.getElementById('viewHistory'), viewElo = document.getElementById('viewElo'), viewNetworth = document.getElementById('viewNetworth');
+const navFloor = document.getElementById('navFloor'), navAssets = document.getElementById('navAssets'), navHistory = document.getElementById('navHistory'), navElo = document.getElementById('navElo'), navNetworth = document.getElementById('navNetworth'), navWagers = document.getElementById('navWagers');
+const viewFloor = document.getElementById('viewTradingFloor'), viewAssets = document.getElementById('viewAssets'), viewHistory = document.getElementById('viewHistory'), viewElo = document.getElementById('viewElo'), viewNetworth = document.getElementById('viewNetworth'), viewWagers = document.getElementById('viewWagers');
 function activateNav(activeNav, activeView){
-  [navFloor,navAssets,navHistory,navElo,navNetworth].forEach(b=>b.classList.remove('active'));
-  [viewFloor,viewAssets,viewHistory,viewElo,viewNetworth].forEach(v=>v.classList.add('hidden'));
+  [navFloor,navAssets,navHistory,navElo,navNetworth,navWagers].forEach(b=>b.classList.remove('active'));
+  [viewFloor,viewAssets,viewHistory,viewElo,viewNetworth,viewWagers].forEach(v=>v.classList.add('hidden'));
   activeNav.classList.add('active');
   activeView.classList.remove('hidden');
 }
@@ -2950,6 +3768,16 @@ navAssets.addEventListener('click', () => { activateNav(navAssets, viewAssets); 
 navHistory.addEventListener('click', () => { activateNav(navHistory, viewHistory); renderHistory(); });
 navElo.addEventListener('click', () => { activateNav(navElo, viewElo); renderEloTab(); });
 navNetworth.addEventListener('click', () => { activateNav(navNetworth, viewNetworth); renderNetworthTab(); });
+let betsSubscribed = false;
+navWagers.addEventListener('click', () => {
+  activateNav(navWagers, viewWagers);
+  if(!betsSubscribed){
+    betsSubscribed = true;
+    subscribeToBets();
+    subscribeToMyWagers(state.uid);
+  }
+  renderBets(); renderMyWagers();
+});
 document.getElementById('assetSymbol').addEventListener('change', e => { state.assetSymbol=e.target.value; renderAssetPreview(); });
 document.getElementById('assetQty').addEventListener('input', renderAssetPreview);
 document.getElementById('assetBuyBtn').addEventListener('click', buyStock);
