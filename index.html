@@ -2670,16 +2670,35 @@ function renderAssetPreview(){
   btn.disabled = price==null || qty<1;
   btn.textContent = symbol && price!=null ? 'Buy ' + qty + 'x ' + symbol : 'Select a stock first';
 }
+// Fetches the EXACT canonical price Firestore security rules check every
+// stock trade against: market/latestReportId -> pricesByReport/{reportId}.
+// currentPrice() re-derives a price live from Elo + PRICE_SCALE_SETTINGS on
+// every render, so it drifts out of sync with that on-chain snapshot the
+// instant an admin tunes the price curve (settings/priceWeights) — the
+// snapshot itself is only ever republished by a new report upload. Trading
+// at whatever currentPrice() says in that gap fails every time with
+// "Missing or insufficient permissions", because the rule's cashDelta check
+// is comparing against the OLD snapshot price, not the newly-tuned one.
+// Fetching and trading at the canonical price directly makes this
+// impossible to drift, by construction — no rules change needed.
+async function fetchCanonicalPrice(symbol){
+  const pointerSnap = await getDoc(doc(db, 'market', 'latestReportId'));
+  if(!pointerSnap.exists()) return null; // no snapshot published yet at all
+  const priceSnap = await getDoc(doc(db, 'pricesByReport', pointerSnap.data().reportId));
+  if(!priceSnap.exists()) return null;
+  const price = priceSnap.data().prices ? priceSnap.data().prices[symbol] : null;
+  return (typeof price === 'number') ? price : null;
+}
 async function buyStock(){
   const symbol = document.getElementById('assetSymbol').value;
   const qty = parseInt(document.getElementById('assetQty').value,10);
   const msg = document.getElementById('assetMsg');
   msg.className='msg'; msg.textContent='';
-  const rawPrice = currentPrice(symbol);
-  if(!symbol || rawPrice==null){ msg.className='msg err'; msg.textContent='Pick a stock first.'; return; }
+  if(!symbol){ msg.className='msg err'; msg.textContent='Pick a stock first.'; return; }
   if(isNaN(qty) || qty<1){ msg.className='msg err'; msg.textContent='Enter a valid share quantity.'; return; }
-  const price = Math.round(rawPrice*100)/100; // round ONCE, here — matches what the rule re-derives cost from
-  const cost = price*qty;                     // no further rounding: must match price*qty bit-for-bit in the rule
+  const price = await fetchCanonicalPrice(symbol); // exactly what the rule will check cashDelta against
+  if(price==null){ msg.className='msg err'; msg.textContent="Market price for this stock isn't published yet — try again in a moment, or ping an admin."; return; }
+  const cost = price*qty; // no further rounding: price is already the canonical, already-rounded snapshot value
   if(cost > state.cash){ msg.className='msg err'; msg.textContent='Not enough cash. Need ' + fmtMoney(cost) + ', have ' + fmtMoney(state.cash) + '.'; return; }
   try{
     const ref = doc(db,'users',state.uid,'positions',stockPositionId(symbol));
@@ -2706,8 +2725,8 @@ async function sellStock(symbol, sellQty){
   sellQty = Math.floor(Number(sellQty));
   if(!sellQty || sellQty<1) return;
   if(sellQty > pos.qty) { alert('You only own ' + pos.qty + ' share' + (pos.qty===1?'':'s') + ' of ' + symbol + '.'); return; }
-  const price = currentPrice(symbol);
-  if(price==null) return;
+  const price = await fetchCanonicalPrice(symbol); // exactly what the rule will check cashDelta against
+  if(price==null){ alert("Market price for this stock isn't published yet — try again in a moment."); return; }
   const proceeds = Math.round(price*sellQty*100)/100;
   const pnl = Math.round((price - Number(pos.avgCost||0))*sellQty*100)/100;
   if(!confirm('Sell ' + sellQty + 'x ' + symbol + ' at ' + fmtMoney(price) + ' for ' + fmtMoney(proceeds) + '?')) return;
