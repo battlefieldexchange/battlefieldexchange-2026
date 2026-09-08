@@ -389,7 +389,8 @@
           </div>
           <div class="admin-note" style="margin-top:16px;">Price scale — changing these and hitting Recalculate reprices every stock for <b>every connected trader</b> immediately. Stock price is a direct read of each player's current Elo <b>rank</b> that day (see the Elo Distribution tab) — no day-over-day compounding, no separate weight set to tune. The middle-ranked player prices at "Median"; the single top-ranked player's price approaches (but never quite reaches) "Top price" as more players are tracked. Because this is rank-based, not raw-Elo-based, it can't blow up no matter how large the actual Elo gap between players gets. Only visible/editable here, admin-only server-side too.</div>
           <div class="weight-row"><label>Median price</label><input type="number" step="1" id="pMedian" style="width:100%"><span></span></div>
-          <div class="weight-row"><label>Top price</label><input type="number" step="1" id="pTop" style="width:100%"><span></span></div>
+          <div class="weight-row"><label>Reference top price (curve continues past this — not a cap)</label><input type="number" step="1" id="pTop" style="width:100%"><span></span></div>
+          <div class="weight-row"><label>Std. deviations where growth goes from exponential to linear</label><input type="number" step="0.1" min="0.5" id="pSpread" style="width:100%"><span></span></div>
           <button class="debug-btn" id="dbgRecalc">Recalculate &amp; broadcast to all clients</button>
           <div class="msg" id="wMsg"></div>
           <div class="debug-inline" style="margin-top:10px;">
@@ -629,7 +630,19 @@ const state = {
     selectedSymbols: new Set(), tradeType: 'call', historyFilter: 'all', assetSymbol: '', tickerSearch: '',
     bets: [], historicalBets: [], myWagers: [], betFilter: 'open'
 };
-const ELO_START = 1500, ELO_K = 32;
+const ELO_START = 1500;
+// Provisional K-factor, same idea real rating federations (FIDE, USCF)
+// use: a brand-new rating hasn't earned any confidence yet, so let it
+// move fast and find its real level. Once there's a track record, slow
+// it down so one freak battle can't swing an established rating much.
+// Keyed on how many battles a player has BEFORE this one — called at the
+// point each delta is computed, before `battles` gets incremented for
+// the current battle.
+function kFactorFor(battles) {
+    if (battles < 10) return 40;   // provisional — still finding its level
+    if (battles < 30) return 24;   // established, but not fully settled
+    return 16;                     // settled — big single-battle swings should be rare
+}
 const MEDIC_WEIGHTS = { damage: 0.15, healing: 0.45, kills: 0.00, assists: 0.20, deaths: 0.40 };
 const DPS_WEIGHTS = { damage: 0.35, healing: 0.00, kills: 0.05, assists: 0.25, deaths: 0.35 };
 function eloWeightsFor(profession) {
@@ -656,7 +669,6 @@ function factionGroups(rows) {
     });
     return byFaction;
 }
-const TEAM_ELO_K = 32;
 const PERFORMANCE_INFLUENCE = 0.4;
 function performanceMultiplier(compositeZ) {
     const clamped = Math.max(-Z_CLAMP, Math.min(Z_CLAMP, compositeZ));
@@ -675,25 +687,55 @@ function marginMultiplier(scoreA, scoreB, rowsA, rowsB) {
     const marginRatio = Math.min(1, Math.abs(scoreA - scoreB) / totalDeaths);
     return 1 + MOV_INFLUENCE * marginRatio;
 }
-const DEFAULT_PRICE_SCALE = { median: 100, top: 10000 };
+const DEFAULT_PRICE_SCALE = { median: 100, top: 10000, spread: 3 };
 let PRICE_SCALE_SETTINGS = { ...DEFAULT_PRICE_SCALE };
 let NAME_ALIASES = {};
 function canonicalName(name) {
     return NAME_ALIASES[name] || name;
 }
-function priceFromPercentile(percentile) {
+// Price is driven by z-score (how many standard deviations a player's elo
+// sits from the CURRENT population's mean), not by rank. Rank-based pricing
+// (the old priceFromPercentile/pricesFromEloSnapshot) meant only ORDER
+// mattered: the #1 player always priced near the "top" cap almost
+// immediately, whether they led #2 by 5 elo or 500 — reaching #1 was
+// effectively a ceiling, and climbing further did nothing to price because
+// there's no rank above #1 to move into.
+//
+// priceFromZ below has NO ceiling — there is no z-score high enough to make
+// price stop climbing. Below +-`spread` std-devs it's the familiar
+// exponential curve (same shape as before, so a typical player's price
+// still feels like it always has). Beyond that, instead of clamping flat
+// (a hard ceiling) or continuing the SAME exponential (which is what
+// "insane compounding" means in practice — every extra std-dev multiplies
+// price instead of adding to it, so an outlier's price explodes), it
+// switches to growing LINEARLY, at whatever rate the exponential curve was
+// already moving at right at that point — so the join has no kink, but
+// each extra point of elo edge buys a little less than the last, forever,
+// instead of buying more and more (exponential) or nothing at all (a cap).
+function priceFromZ(z) {
+    const t = PRICE_SCALE_SETTINGS.spread || DEFAULT_PRICE_SCALE.spread; // std-devs where the curve straightens out from exponential to linear
     const ratio = PRICE_SCALE_SETTINGS.top / PRICE_SCALE_SETTINGS.median;
-    const price = PRICE_SCALE_SETTINGS.median * Math.pow(ratio, 2 * (percentile - 0.5));
-    return Math.round(price * 100) / 100;
+    let price;
+    if (Math.abs(z) <= t) {
+        price = PRICE_SCALE_SETTINGS.median * Math.pow(ratio, z / t);
+    } else {
+        const edgeZ = Math.sign(z) * t;
+        const edgePrice = PRICE_SCALE_SETTINGS.median * Math.pow(ratio, edgeZ / t); // == top (or median^2/top on the downside)
+        const slopeAtEdge = edgePrice * Math.log(ratio) / t; // d(price)/dz of the exponential, evaluated at the join
+        price = edgePrice + slopeAtEdge * (z - edgeZ);
+    }
+    return Math.round(Math.max(0.01, price) * 100) / 100; // floor only to keep price positive, not a ceiling
 }
 function pricesFromEloSnapshot(ratings, allNames) {
-    const sorted = [...allNames].sort((a, b) => ratings[b].elo - ratings[a].elo);
-    const N = sorted.length;
+    const n = allNames.length;
+    const elos = allNames.map(name => ratings[name].elo);
+    const mean = elos.reduce((a, b) => a + b, 0) / n;
+    const variance = elos.reduce((a, b) => a + (b - mean) * (b - mean), 0) / n;
+    const stdev = Math.sqrt(variance) || 1; // 1 player (or a dead-even field): stdev 0 -> everyone prices at median, not a divide-by-zero
     const prices = {};
-    sorted.forEach((name, i) => {
-        const rank = i + 1;
-        const percentile = 1 - rank / (N + 1);
-        prices[name] = priceFromPercentile(percentile);
+    allNames.forEach(name => {
+        const z = (ratings[name].elo - mean) / stdev;
+        prices[name] = priceFromZ(z);
     });
     return prices;
 }
@@ -1030,6 +1072,7 @@ async function recalculatePriceScale() {
     const settings = {
         median: read('pMedian', PRICE_SCALE_SETTINGS.median),
         top: read('pTop', PRICE_SCALE_SETTINGS.top),
+        spread: read('pSpread', PRICE_SCALE_SETTINGS.spread),
     };
     const msg = document.getElementById('wMsg');
     try {
@@ -1133,7 +1176,7 @@ async function removeNameGroup(canonical) {
     catch (err) { }
 }
 function populateWeightInputsIfIdle() {
-    const map = { pMedian: 'median', pTop: 'top' };
+    const map = { pMedian: 'median', pTop: 'top', pSpread: 'spread' };
     Object.keys(map).forEach(id => {
         const el = document.getElementById(id);
         if (el && document.activeElement !== el)
@@ -1888,11 +1931,11 @@ function computeMarketFromReports(reportsList) {
                 const mov = marginMultiplier(scoreA, scoreB, rowsA, rowsB);
                 rowsA.forEach(r => {
                     const expected = 1 / (1 + Math.pow(10, (avgEloB - ratings[r.name].elo) / 400));
-                    teamDeltas[r.name] = TEAM_ELO_K * (actualA - expected) * mov;
+                    teamDeltas[r.name] = kFactorFor(ratings[r.name].battles) * (actualA - expected) * mov;
                 });
                 rowsB.forEach(r => {
                     const expected = 1 / (1 + Math.pow(10, (avgEloA - ratings[r.name].elo) / 400));
-                    teamDeltas[r.name] = TEAM_ELO_K * (actualB - expected) * mov;
+                    teamDeltas[r.name] = kFactorFor(ratings[r.name].battles) * (actualB - expected) * mov;
                 });
                 const recordResult = (rowsSide, actual) => rowsSide.forEach(r => {
                     if (actual === 1)
@@ -1922,7 +1965,7 @@ function computeMarketFromReports(reportsList) {
                         actual += cA > cB ? 1 : (cA < cB ? 0 : 0.5);
                         expected += 1 / (1 + Math.pow(10, (ratings[b.name].elo - ratings[a.name].elo) / 400));
                     });
-                    deltas[a.name] = (ELO_K / (n - 1)) * (actual - expected);
+                    deltas[a.name] = (kFactorFor(ratings[a.name].battles) / (n - 1)) * (actual - expected);
                 });
                 rows.forEach(r => { ratings[r.name].elo += deltas[r.name]; ratings[r.name].battles += 1; });
             }
