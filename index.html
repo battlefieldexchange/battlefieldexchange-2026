@@ -403,7 +403,19 @@
           <div class="field"><label>Correct display name</label><input type="text" id="nameGroupCanonical" placeholder="e.g. Tristed Commando"></div>
           <button class="debug-btn" id="dbgSaveNameGroup">Save group</button>
           <div class="msg" id="nameGroupMsg"></div>
+          <div class="field" style="margin-top:12px;"><label>Bulk import — one group per line: <code>alias1, alias2 -&gt; Correct Name</code></label><textarea id="nameGroupBulk" rows="6" style="width:100%; font-family:monospace; font-size:12px;" placeholder="Trlsted, Itlsted, I'rlsted -> Tristed"></textarea></div>
+          <button class="debug-btn" id="dbgBulkImportNameGroups">Import lines above</button>
+          <div class="msg" id="nameGroupBulkMsg"></div>
           <div id="nameGroupsList" style="margin-top:10px; font-size:12px; color:var(--text-dim);">No groups yet.</div>
+          <div class="admin-note" style="margin-top:16px;">Scan every cached report for names already known to be aliases (from the groups above), so you can see exactly which reports still carry a messed-up name before or after merging.</div>
+          <button class="debug-btn" id="dbgScanBadNames">Scan reports for known messed-up names</button>
+          <div id="badNameResults" style="margin-top:10px; font-size:12px; color:var(--text-dim); white-space:pre-line; max-height:300px; overflow-y:auto;"></div>
+          <div class="admin-note" style="margin-top:16px;">Find NEW name mismatches automatically — compares every report's raw numbers (damage/healing/assists/deaths) against every other report, completely ignoring the name field. When two reports have an identical stats fingerprint but different player names, that's almost certainly the same battle read twice with a name garbled by OCR. Unlike the scan above, this doesn't require you to already know which name is wrong — it's how you find the ones you haven't grouped yet. Nothing is deleted or changed here; it only suggests groups for you to review and save above.</div>
+          <button class="debug-btn" id="dbgFindNameMismatches">Find likely name-mismatch duplicates</button>
+          <div id="nameMismatchResults" style="margin-top:10px; font-size:12px; color:var(--text-dim); white-space:pre-line; max-height:300px; overflow-y:auto;"></div>
+          <div class="admin-note" style="margin-top:16px;">Look up which days a player appears on, across every spelling grouped to them — a gap in an otherwise-active player's day range usually means that day's export misspelled them in a way that isn't grouped yet.</div>
+          <div class="field"><label>Player</label><select id="playerDayLookupSelect" style="width:100%;"><option value="">— pick a player —</option></select></div>
+          <div id="playerDayLookupResults" style="margin-top:10px; font-size:12px; color:var(--text-dim); white-space:pre-line; max-height:300px; overflow-y:auto;"></div>
         </div>
       </section>
 
@@ -631,17 +643,12 @@ const state = {
     bets: [], historicalBets: [], myWagers: [], betFilter: 'open'
 };
 const ELO_START = 1500;
-// Provisional K-factor, same idea real rating federations (FIDE, USCF)
-// use: a brand-new rating hasn't earned any confidence yet, so let it
-// move fast and find its real level. Once there's a track record, slow
-// it down so one freak battle can't swing an established rating much.
-// Keyed on how many battles a player has BEFORE this one — called at the
-// point each delta is computed, before `battles` gets incremented for
-// the current battle.
 function kFactorFor(battles) {
-    if (battles < 10) return 40;   // provisional — still finding its level
-    if (battles < 30) return 24;   // established, but not fully settled
-    return 16;                     // settled — big single-battle swings should be rare
+    if (battles < 10)
+        return 40;
+    if (battles < 30)
+        return 24;
+    return 16;
 }
 const MEDIC_WEIGHTS = { damage: 0.15, healing: 0.45, kills: 0.00, assists: 0.20, deaths: 0.40 };
 const DPS_WEIGHTS = { damage: 0.35, healing: 0.00, kills: 0.05, assists: 0.25, deaths: 0.35 };
@@ -693,42 +700,20 @@ let NAME_ALIASES = {};
 function canonicalName(name) {
     return NAME_ALIASES[name] || name;
 }
-// Price is driven by z-score (how many standard deviations a player's elo
-// sits from the CURRENT population's mean), not by rank. Rank-based pricing
-// (the old priceFromPercentile/pricesFromEloSnapshot) meant only ORDER
-// mattered: the #1 player always priced near the "top" cap almost
-// immediately, whether they led #2 by 5 elo or 500 — reaching #1 was
-// effectively a ceiling, and climbing further did nothing to price because
-// there's no rank above #1 to move into.
-//
-// priceFromZ below is a STRAIGHT LINE in z — every extra standard deviation
-// of elo edge is worth the same fixed dollar amount, wherever you are in
-// the distribution. That fixed-per-unit design is the whole point, and the
-// reason this isn't exponential (like the first version of this fix was):
-// exponential means each extra std-dev MULTIPLIES price by the same
-// factor, and multiplying a bigger number produces a bigger jump — so two
-// players close together near the top end up with wildly different prices
-// even for a modest real elo gap, purely because they're both already
-// expensive. That's the same "compounding" character behind the original
-// bug this whole system was built to avoid, just resurfacing here. Linear
-// has no such effect: a given elo gap is worth the same price gap whether
-// it happens near the middle of the pack or way out at the front, AND
-// there's still no ceiling — price keeps climbing for as long as z does,
-// forever, just steadily instead of accelerating.
 function priceFromZ(z) {
-    const t = PRICE_SCALE_SETTINGS.spread || DEFAULT_PRICE_SCALE.spread; // std-devs of edge to go from median price to top price
+    const t = PRICE_SCALE_SETTINGS.spread || DEFAULT_PRICE_SCALE.spread;
     const median = PRICE_SCALE_SETTINGS.median;
     const top = PRICE_SCALE_SETTINGS.top;
-    const slope = (top - median) / t; // $ per 1 std-dev of edge -- constant, on purpose (see above)
+    const slope = (top - median) / t;
     const price = median + slope * z;
-    return Math.round(Math.max(0.01, price) * 100) / 100; // floor only to keep price positive, not a ceiling
+    return Math.round(Math.max(0.01, price) * 100) / 100;
 }
 function pricesFromEloSnapshot(ratings, allNames) {
     const n = allNames.length;
     const elos = allNames.map(name => ratings[name].elo);
     const mean = elos.reduce((a, b) => a + b, 0) / n;
     const variance = elos.reduce((a, b) => a + (b - mean) * (b - mean), 0) / n;
-    const stdev = Math.sqrt(variance) || 1; // 1 player (or a dead-even field): stdev 0 -> everyone prices at median, not a divide-by-zero
+    const stdev = Math.sqrt(variance) || 1;
     const prices = {};
     allNames.forEach(name => {
         const z = (ratings[name].elo - mean) / stdev;
@@ -916,8 +901,10 @@ function validateAndParseReportHTML(text) {
     if (missing.length)
         return { valid: false, error: 'Not a recognized battle report — missing column(s): ' + missing.join(', ') };
     const colIndex = {};
-    headerCells.forEach((h, i) => { if (REQUIRED_HEADERS.includes(h))
-        colIndex[h] = i; });
+    headerCells.forEach((h, i) => {
+        if (REQUIRED_HEADERS.includes(h))
+            colIndex[h] = i;
+    });
     const players = [];
     for (let r = 1; r < rows.length; r++) {
         const cells = Array.from(rows[r].querySelectorAll('td'));
@@ -948,13 +935,25 @@ function validateAndParseReportHTML(text) {
     return { valid: true, players };
 }
 async function hashReportStats(players) {
-    const sorted = [...players].sort((a, b) => a.name.localeCompare(b.name));
+    const sorted = [...players].sort((a, b) => canonicalName(a.name).localeCompare(canonicalName(b.name)));
     const canonical = sorted.map(p => [
-        p.name, p.damage, p.healing, p.assists, p.deaths
+        canonicalName(p.name), p.damage, p.healing, p.assists, p.deaths
     ].join('|')).join('\n');
     const bytes = new TextEncoder().encode(canonical);
     const digest = await crypto.subtle.digest('SHA-256', bytes);
     return Array.from(new Uint8Array(digest)).map(b => b.toString(16).padStart(2, '0')).join('');
+}
+function statsKey(p) {
+    return [p.damage, p.healing, p.assists, p.deaths].join('|');
+}
+async function hashStatsOnly(players) {
+    const sorted = [...players].map(statsKey).sort();
+    const bytes = new TextEncoder().encode(sorted.join('\n'));
+    const digest = await crypto.subtle.digest('SHA-256', bytes);
+    return Array.from(new Uint8Array(digest)).map(b => b.toString(16).padStart(2, '0')).join('');
+}
+function statsSortedPlayers(players) {
+    return [...players].map(p => ({ name: p.name, key: statsKey(p) })).sort((a, b) => a.key.localeCompare(b.key));
 }
 async function submitReport(players, filename, isSynthetic) {
     const statsHash = await hashReportStats(players);
@@ -1144,8 +1143,10 @@ async function saveNameGroup() {
         return;
     }
     const newMap = { ...NAME_ALIASES };
-    chosen.forEach(alias => { if (alias !== canonical)
-        newMap[alias] = canonical; });
+    chosen.forEach(alias => {
+        if (alias !== canonical)
+            newMap[alias] = canonical;
+    });
     try {
         await setDoc(doc(db, 'settings', 'nameAliases'), { map: newMap, updatedAt: serverTimestamp(), updatedBy: state.username });
         canonicalInput.value = '';
@@ -1165,12 +1166,155 @@ async function removeNameGroup(canonical) {
     if (!state.isAdmin)
         return;
     const newMap = { ...NAME_ALIASES };
-    Object.keys(newMap).forEach(alias => { if (newMap[alias] === canonical)
-        delete newMap[alias]; });
+    Object.keys(newMap).forEach(alias => {
+        if (newMap[alias] === canonical)
+            delete newMap[alias];
+    });
     try {
         await setDoc(doc(db, 'settings', 'nameAliases'), { map: newMap, updatedAt: serverTimestamp(), updatedBy: state.username });
     }
     catch (err) { }
+}
+function parseGroupLines(text) {
+    const groups = [];
+    const errors = [];
+    text.split('\n').forEach((line, i) => {
+        const trimmed = line.trim();
+        if (!trimmed)
+            return;
+        const parts = trimmed.split(/->|\u2192/);
+        if (parts.length !== 2) {
+            errors.push('Line ' + (i + 1) + ': missing "->"');
+            return;
+        }
+        const aliases = parts[0].split(',').map(s => s.trim()).filter(Boolean);
+        const canonical = parts[1].trim();
+        if (!aliases.length || !canonical) {
+            errors.push('Line ' + (i + 1) + ': empty name(s)');
+            return;
+        }
+        groups.push({ aliases, canonical });
+    });
+    return { groups, errors };
+}
+async function bulkImportNameGroups() {
+    if (!state.isAdmin)
+        return;
+    const ta = document.getElementById('nameGroupBulk');
+    const msg = document.getElementById('nameGroupBulkMsg');
+    const { groups, errors } = parseGroupLines(ta.value);
+    if (!groups.length) {
+        msg.textContent = errors.length ? ('Nothing imported — ' + errors.join('; ')) : 'Paste some lines first.';
+        msg.className = 'msg err';
+        return;
+    }
+    const newMap = { ...NAME_ALIASES };
+    groups.forEach(({ aliases, canonical }) => {
+        aliases.forEach(alias => {
+            if (alias !== canonical)
+                newMap[alias] = canonical;
+        });
+    });
+    try {
+        await setDoc(doc(db, 'settings', 'nameAliases'), { map: newMap, updatedAt: serverTimestamp(), updatedBy: state.username });
+        ta.value = '';
+        msg.textContent = 'Imported ' + groups.length + ' group' + (groups.length === 1 ? '' : 's') + (errors.length ? (' — skipped ' + errors.length + ' bad line(s): ' + errors.join('; ')) : '') + '.';
+        msg.className = 'msg ok';
+    }
+    catch (err) {
+        msg.textContent = 'Failed: ' + err.message;
+        msg.className = 'msg err';
+    }
+}
+function scanReportsForKnownBadNames() {
+    const box = document.getElementById('badNameResults');
+    if (!box)
+        return;
+    if (!Object.keys(NAME_ALIASES).length) {
+        box.textContent = 'No known groups yet — save or import some above first.';
+        return;
+    }
+    const hits = [];
+    state.reports.forEach(rep => {
+        rep.players.forEach(p => {
+            if (NAME_ALIASES[p.name]) {
+                hits.push({ id: rep.id, day: rep.day, name: p.name, mapsTo: NAME_ALIASES[p.name] });
+            }
+        });
+    });
+    if (!hits.length) {
+        box.textContent = 'No known messed-up names found in any cached report.';
+        return;
+    }
+    hits.sort((a, b) => a.day - b.day);
+    const distinctPairs = new Set(hits.map(h => h.name + '->' + h.mapsTo));
+    const header = 'These ' + hits.length + ' occurrences (' + distinctPairs.size + ' distinct misspelling' + (distinctPairs.size === 1 ? '' : 's') + ') are ALREADY grouped and already resolve automatically wherever prices, Elo, and history are computed — this list is for audit only, nothing here needs any action. Raw report data is never rewritten, so a name will always show up here once it has a group, permanently — that is expected, not a sign anything is broken. To find misspellings that AREN\'T grouped yet, use the Player day-lookup below instead and look for gaps.\n\n';
+    box.textContent = header + hits.map(h => 'Day ' + h.day + '  ·  report ' + h.id + '  ·  "' + h.name + '" -> ' + h.mapsTo).join('\n');
+}
+function buildCanonicalGroups() {
+    const allRaw = new Set();
+    state.reports.forEach(rep => rep.players.forEach(p => allRaw.add(p.name)));
+    Object.keys(NAME_ALIASES).forEach(a => allRaw.add(a));
+    Object.values(NAME_ALIASES).forEach(c => allRaw.add(c));
+    const groups = {};
+    allRaw.forEach(name => {
+        const canon = canonicalName(name);
+        if (!groups[canon])
+            groups[canon] = new Set();
+        groups[canon].add(name);
+    });
+    return groups;
+}
+function populatePlayerDayLookup() {
+    const sel = document.getElementById('playerDayLookupSelect');
+    if (!sel)
+        return;
+    const prev = sel.value;
+    const groups = buildCanonicalGroups();
+    const names = Object.keys(groups).sort((a, b) => a.localeCompare(b));
+    sel.innerHTML = '<option value="">— pick a player —</option>' + names.map(n => {
+        const extra = groups[n].size - 1;
+        const label = n + (extra > 0 ? ' (+' + extra + ' alias' + (extra === 1 ? '' : 'es') + ')' : '');
+        return '<option value="' + n.replace(/"/g, '&quot;') + '">' + label + '</option>';
+    }).join('');
+    if (names.includes(prev))
+        sel.value = prev;
+}
+function renderPlayerDayLookup() {
+    const sel = document.getElementById('playerDayLookupSelect');
+    const box = document.getElementById('playerDayLookupResults');
+    if (!sel || !box)
+        return;
+    const canon = sel.value;
+    if (!canon) {
+        box.textContent = '';
+        return;
+    }
+    const groups = buildCanonicalGroups();
+    const rawNames = groups[canon] || new Set([canon]);
+    const hits = [];
+    state.reports.forEach(rep => {
+        rep.players.forEach(p => {
+            if (rawNames.has(p.name))
+                hits.push({ day: rep.day, id: rep.id, name: p.name });
+        });
+    });
+    if (!hits.length) {
+        box.textContent = 'No reports found for this player.';
+        return;
+    }
+    hits.sort((a, b) => a.day - b.day);
+    const days = hits.map(h => h.day);
+    const gaps = [];
+    for (let i = 1; i < days.length; i++) {
+        if (days[i] - days[i - 1] > 1)
+            gaps.push('day ' + (days[i - 1] + 1) + (days[i] - 1 > days[i - 1] + 1 ? '–' + (days[i] - 1) : ''));
+    }
+    let out = hits.map(h => 'Day ' + h.day + '  ·  report ' + h.id + '  ·  "' + h.name + '"').join('\n');
+    out += '\n\nAppeared on ' + hits.length + ' day' + (hits.length === 1 ? '' : 's') + ' (day ' + days[0] + ' to ' + days[days.length - 1] + ').';
+    if (gaps.length)
+        out += '\nNo appearance under any known spelling on: ' + gaps.join(', ') + ' — worth checking those reports for an ungrouped misread, if this player is usually active.';
+    box.textContent = out;
 }
 function populateWeightInputsIfIdle() {
     const map = { pMedian: 'median', pTop: 'top', pSpread: 'spread' };
@@ -1991,8 +2135,10 @@ function priceAtOrBefore(symbol, day) {
     if (!p)
         return null;
     let best = null;
-    p.priceHistory.forEach(ph => { if (ph.day <= day)
-        best = ph.price; });
+    p.priceHistory.forEach(ph => {
+        if (ph.day <= day)
+            best = ph.price;
+    });
     if (best === null && p.priceHistory.length)
         best = p.priceHistory[0].price;
     return best;
@@ -2010,7 +2156,13 @@ function volatility(symbol) {
         return 0.25;
     const mean = returns.reduce((a, b) => a + b, 0) / returns.length;
     const variance = returns.reduce((a, b) => a + Math.pow(b - mean, 2), 0) / returns.length;
-    return Math.max(0.05, Math.sqrt(variance));
+    // Capped at 300%: a player hitting the $0.01 price floor (see priceFromZ) on
+    // one bad day, then pricing normally again, produces a day-over-day percentage
+    // return in the tens of thousands of percent — this single outlier point was
+    // dominating the variance calc and inflating option premiums into the millions.
+    // 300% is well above any volatility seen in normal play, so this only ever
+    // engages on that floor-price artifact, not on genuine price swings.
+    return Math.min(3, Math.max(0.05, Math.sqrt(variance)));
 }
 function computeOptionPremium(symbol, strike, daysToExpiry, isPut) {
     const price = currentPrice(symbol);
@@ -2057,10 +2209,13 @@ function updateStrikeChain() {
     const isPut = state.tradeType === 'put';
     const strikes = generateStrikeChain(price);
     let closest = strikes[0], closestDiff = Infinity;
-    strikes.forEach(s => { const d = Math.abs(s - price); if (d < closestDiff) {
-        closest = s;
-        closestDiff = d;
-    } });
+    strikes.forEach(s => {
+        const d = Math.abs(s - price);
+        if (d < closestDiff) {
+            closest = s;
+            closestDiff = d;
+        }
+    });
     sel.innerHTML = strikes.map(s => {
         const label = s === closest ? ' (ATM)' : ((isPut ? s > price : s < price) ? ' (ITM)' : ' (OTM)');
         return '<option value="' + s + '">$' + s.toFixed(2) + label + '</option>';
@@ -2127,6 +2282,52 @@ document.getElementById('dbgFindDupes').addEventListener('click', async () => {
             (rep.isSynthetic ? ' [synthetic]' : '') + ' · by ' + escapeHtml(rep.uploadedByUsername || '?') +
             (i === 0 ? '' : ' <button class="del-report" data-reportid="' + rep.id + '">Delete</button>') + '</div>').join('') + '</div>').join('');
     out.querySelectorAll('.del-report').forEach(btn => btn.addEventListener('click', () => deleteReport(btn.dataset.reportid)));
+});
+document.getElementById('dbgFindNameMismatches').addEventListener('click', async () => {
+    const out = document.getElementById('nameMismatchResults');
+    out.textContent = 'Comparing stat fingerprints across ' + state.reports.length + ' reports, ignoring names…';
+    const byStatsHash = {};
+    for (const rep of state.reports) {
+        const sHash = await hashStatsOnly(rep.players);
+        (byStatsHash[sHash] = byStatsHash[sHash] || []).push(rep);
+    }
+    const candidateGroups = Object.values(byStatsHash).filter(g => g.length > 1);
+    const suggestions = [];
+    const seenPairs = new Set();
+    candidateGroups.forEach(group => {
+        const base = statsSortedPlayers(group[0].players);
+        for (let i = 1; i < group.length; i++) {
+            const other = statsSortedPlayers(group[i].players);
+            for (let j = 0; j < base.length; j++) {
+                const a = base[j].name, b = other[j] ? other[j].name : null;
+                if (!b || canonicalName(a) === canonicalName(b))
+                    continue;
+                const pairKey = [a, b].sort().join('::');
+                if (seenPairs.has(pairKey))
+                    continue;
+                seenPairs.add(pairKey);
+                suggestions.push({ a, b, dayA: group[0].day, dayB: group[i].day });
+            }
+        }
+    });
+    if (!suggestions.length) {
+        out.textContent = candidateGroups.length
+            ? 'Found reports with matching stat fingerprints, but their names already agree or are already grouped — nothing new to alias.'
+            : 'No two reports share an identical stats fingerprint right now. Nothing looks like a name-garbled duplicate.';
+        return;
+    }
+    out.innerHTML = '<div style="color:var(--amber); margin-bottom:8px;">' + suggestions.length + ' likely OCR name mismatch(es) — identical numbers, different text. Review before merging (nothing is changed until you save a group above):</div>' +
+        suggestions.map(s => '<div style="padding:3px 0; border-bottom:1px solid var(--line);">"' + escapeHtml(s.a) + '" (day ' + s.dayA + ')  &harr;  "' + escapeHtml(s.b) + '" (day ' + s.dayB + ')' +
+            ' <button class="debug-btn" data-fix-a="' + escapeHtml(s.a).replace(/"/g, '&quot;') + '" data-fix-b="' + escapeHtml(s.b).replace(/"/g, '&quot;') + '" style="padding:2px 8px; margin-left:6px;">Prefill group</button></div>').join('');
+    out.querySelectorAll('[data-fix-a]').forEach(btn => btn.addEventListener('click', () => {
+        populateNameGroupSelect();
+        const sel = document.getElementById('nameGroupSelect');
+        Array.from(sel.options).forEach(o => { o.selected = (o.value === btn.dataset.fixA || o.value === btn.dataset.fixB); });
+        const canonicalInput = document.getElementById('nameGroupCanonical');
+        canonicalInput.value = '';
+        canonicalInput.focus();
+        canonicalInput.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    }));
 });
 document.getElementById('dbgMigrateReports').addEventListener('click', async () => {
     const out = document.getElementById('dupeResults');
@@ -2216,6 +2417,9 @@ document.getElementById('nameGroupsList').addEventListener('click', (e) => {
     if (canon)
         removeNameGroup(canon);
 });
+document.getElementById('dbgBulkImportNameGroups').addEventListener('click', bulkImportNameGroups);
+document.getElementById('dbgScanBadNames').addEventListener('click', scanReportsForKnownBadNames);
+document.getElementById('playerDayLookupSelect').addEventListener('change', renderPlayerDayLookup);
 async function deleteReport(reportId) {
     if (!confirm('Delete this report from the shared market? Prices for everyone will recompute without it.'))
         return;
@@ -2408,11 +2612,6 @@ async function closePositionEarly(posId) {
         payoff = computeSwapPremium(pos.symbol, pos.threshold, pos.notional, remaining).premium * pos.qty;
     }
     else {
-        // Full current premium (intrinsic + whatever time value is left),
-        // same formula buying uses -- NOT intrinsic value alone. Intrinsic
-        // -only treats "sell early" as "force-expire this instant",
-        // which throws away every cent of real time value still on the
-        // contract even one day after buying it.
         const calc = computeOptionPremium(pos.symbol, pos.strike, remaining, pos.type === 'put');
         if (!calc) {
             alert('No price data for that stock right now.');
@@ -2730,26 +2929,9 @@ async function sellStock(symbol, sellQty) {
             const posData = posSnap.data();
             if (sellQty > posData.qty)
                 throw new Error('You only own ' + posData.qty + ' share' + (posData.qty === 1 ? '' : 's') + ' of ' + symbol + '.');
-            // Read BEFORE any writes -- Firestore transactions require every
-            // tx.get() to happen before the first tx.set()/update()/delete(),
-            // in this callback specifically (not just "eventually"). This
-            // used to be read AFTER the tx.update(posRef, ...) calls below,
-            // which the SDK rejects immediately, client-side, before the
-            // transaction ever reaches the server -- so it failed the same
-            // way for every sell, no matter what the rules said.
             const userSnap = await tx.get(userRef);
             const userData = userSnap.data();
             const proceeds = Math.round(price * sellQty * 100) / 100;
-            // rawProceeds (NOT proceeds) is what actually gets written as
-            // cashDelta and as the cash delta below. The rule re-derives
-            // the expected cashDelta itself as canonicalPrice(symbol) x
-            // qtyChange, with no rounding -- and price*sellQty in raw
-            // floating point essentially never lands on exactly the same
-            // value as Math.round(price*sellQty*100)/100 (e.g. 33.33*3
-            // is 99.98999999999999, not 99.99). Sending the rounded
-            // number made the rule's exact-equality check fail on nearly
-            // every sell. `proceeds` (rounded) is kept only for the
-            // realized-P&L math and doesn't need to match anything.
             const rawProceeds = price * sellQty;
             const pnl = Math.round((price - Number(posData.avgCost || 0)) * sellQty * 100) / 100;
             const remaining = posData.qty - sellQty;
@@ -2925,6 +3107,7 @@ function renderAll() {
     if (state.isAdmin) {
         populateNameGroupSelect();
         renderNameGroupsList();
+        populatePlayerDayLookup();
     }
 }
 function renderEloTab() {
@@ -3276,8 +3459,8 @@ function detectTableGrid(canvas) {
     if (!colIdx.length || !rowIdx.length) {
         throw new Error('Could not detect a gridded table in this image. Use a screenshot of the full bordered battle-report table.');
     }
-    const cols = groupIndices(colIdx, 4);
-    const rows = groupIndices(rowIdx, 4);
+    const cols = groupIndices(colIdx, 10);
+    const rows = groupIndices(rowIdx, 10);
     if (cols[0] > 10)
         cols.unshift(0);
     if (cols[cols.length - 1] < w - 10)
