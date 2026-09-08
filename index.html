@@ -128,6 +128,11 @@
   .type-tabs button.active.swap{color:var(--purple); border-color:var(--purple);}
   .type-desc{font-size:11px; color:var(--text-dim); margin-bottom:14px; line-height:1.5; border-left:2px solid var(--line); padding-left:8px;}
 
+  .side-tabs{display:flex; gap:6px; margin-bottom:14px;}
+  .side-tabs button{ flex:1; font-family:var(--sans); font-weight:600; font-size:12px; background:var(--panel-2); border:1px solid var(--line); color:var(--text-dim); padding:6px 4px; border-radius:2px; cursor:pointer; }
+  .side-tabs button.active.buy{color:var(--phosphor); border-color:var(--phosphor-dim);}
+  .side-tabs button.active.write{color:var(--amber); border-color:var(--amber);}
+
   .field{margin-bottom:12px;}
   .field label{display:block; font-size:11px; color:var(--text-dim); margin-bottom:4px;}
   .field select, .field input{ width:100%; background:var(--panel-2); border:1px solid var(--line); color:var(--text); padding:7px 8px; font-family:var(--mono); font-size:13px; border-radius:2px; }
@@ -444,6 +449,10 @@
             <button class="put" data-type="put">Put</button>
             <button class="swap" data-type="swap">Elim. Swap</button>
           </div>
+          <div class="side-tabs" id="sideTabs">
+            <button class="active buy" data-side="buy">Buy</button>
+            <button class="write" data-side="write">Sell (Write)</button>
+          </div>
           <div class="type-desc" id="typeDesc"></div>
 
           <div class="field"><label>Underlying stock</label><select id="optSymbol"><option value="">— select a stock —</option></select></div>
@@ -473,7 +482,7 @@
             <div class="line" id="rowProb" style="display:none;"><span>Est. trigger probability</span><b id="pbProb">—</b></div>
             <div class="line"><span id="timeValueLabel">Time value (volatility-based)</span><b id="pbTime">—</b></div>
             <div class="line total"><span>Premium / contract</span><b id="pbPremium">—</b></div>
-            <div class="line"><span>Total cost</span><b id="pbTotal">—</b></div>
+            <div class="line"><span id="rowTotalLabel">Total cost</span><b id="pbTotal">—</b></div>
           </div>
           <button class="primary-btn" id="buyBtn" disabled>Select a stock first</button>
           <div class="msg" id="buyMsg"></div>
@@ -639,7 +648,7 @@ const state = {
     uid: null, username: null, isAdmin: false,
     reports: [], day: 0, players: {}, elo: {},
     cash: 10000, realized: 0, positions: [],
-    selectedSymbols: new Set(), tradeType: 'call', historyFilter: 'all', assetSymbol: '', tickerSearch: '',
+    selectedSymbols: new Set(), tradeType: 'call', tradeSide: 'buy', historyFilter: 'all', assetSymbol: '', tickerSearch: '',
     bets: [], historicalBets: [], myWagers: [], betFilter: 'open'
 };
 const ELO_START = 1500;
@@ -2334,9 +2343,15 @@ document.getElementById('dbgMigrateReports').addEventListener('click', async () 
     out.textContent = 'Analyzing ' + state.reports.length + ' reports…';
     const snapshot = [...state.reports];
     const byHash = {};
-    for (const rep of snapshot) {
-        const hash = await hashReportStats(rep.players);
-        (byHash[hash] = byHash[hash] || []).push({ hash, rep });
+    try {
+        for (const rep of snapshot) {
+            const hash = await hashReportStats(rep.players);
+            (byHash[hash] = byHash[hash] || []).push({ hash, rep });
+        }
+    }
+    catch (err) {
+        out.textContent = 'Stopped while analyzing reports — ' + err.message + '. No changes were made.';
+        return;
     }
     const toDelete = [];
     const toRekey = [];
@@ -2365,22 +2380,38 @@ document.getElementById('dbgMigrateReports').addEventListener('click', async () 
     const CHUNK = 200;
     let done = 0;
     out.textContent = 'Working… 0 / ' + ops.length;
-    for (let i = 0; i < ops.length; i += CHUNK) {
-        const chunk = ops.slice(i, i + CHUNK);
-        const batch = writeBatch(db);
-        chunk.forEach(op => {
-            if (op.type === 'delete') {
-                batch.delete(doc(db, 'reports', op.rep.id));
-            }
-            else {
-                const { day, filename, uploadedBy, uploadedByUsername, uploadedAt, isSynthetic, players } = op.rep;
-                batch.set(doc(db, 'reports', op.hash), { day, filename, uploadedBy, uploadedByUsername, uploadedAt, isSynthetic, players });
-                batch.delete(doc(db, 'reports', op.rep.id));
-            }
-        });
-        await batch.commit();
-        done += chunk.length;
-        out.textContent = 'Working… ' + done + ' / ' + ops.length;
+    try {
+        for (let i = 0; i < ops.length; i += CHUNK) {
+            const chunk = ops.slice(i, i + CHUNK);
+            const batch = writeBatch(db);
+            chunk.forEach(op => {
+                if (op.type === 'delete') {
+                    batch.delete(doc(db, 'reports', op.rep.id));
+                }
+                else {
+                    // Old report docs can predate a field being added (e.g. uploadedByUsername),
+                    // in which case it reads back as undefined — and Firestore's set() throws
+                    // synchronously on any undefined field, killing this loop with no on-screen
+                    // error. Default anything missing to null (a value Firestore accepts) instead.
+                    const day = op.rep.day ?? null;
+                    const filename = op.rep.filename ?? null;
+                    const uploadedBy = op.rep.uploadedBy ?? null;
+                    const uploadedByUsername = op.rep.uploadedByUsername ?? null;
+                    const uploadedAt = op.rep.uploadedAt ?? null;
+                    const isSynthetic = !!op.rep.isSynthetic;
+                    const players = op.rep.players ?? [];
+                    batch.set(doc(db, 'reports', op.hash), { day, filename, uploadedBy, uploadedByUsername, uploadedAt, isSynthetic, players });
+                    batch.delete(doc(db, 'reports', op.rep.id));
+                }
+            });
+            await batch.commit();
+            done += chunk.length;
+            out.textContent = 'Working… ' + done + ' / ' + ops.length;
+        }
+    }
+    catch (err) {
+        out.textContent = 'Stopped after ' + done + ' / ' + ops.length + ' — ' + err.message + '. Everything up to that point was already saved (batches commit in groups of ' + CHUNK + '), so it is safe to just click the button again to pick up where this left off.';
+        return;
     }
     out.textContent = 'Done. Deleted ' + toDelete.length + ' duplicate report(s) and re-filed ' + toRekey.length + ' report(s) under duplicate-proof IDs. New uploads will now be checked against all of them, no matter how old.';
 });
@@ -2446,8 +2477,21 @@ document.querySelectorAll('.type-tabs button').forEach(btn => {
             swap: "Elimination Swap (a fictional credit-default-swap analog): you're buying protection that pays a fixed notional the moment the player's Deaths in any single report hit your trigger, any time before expiry, not just at expiry. If it never triggers, it expires worthless."
         };
         document.getElementById('typeDesc').textContent = descs[state.tradeType];
+        document.getElementById('sideTabs').classList.toggle('hidden', state.tradeType === 'swap');
+        if (state.tradeType === 'swap') {
+            state.tradeSide = 'buy';
+            document.querySelectorAll('.side-tabs button').forEach(b => b.classList.toggle('active', b.dataset.side === 'buy'));
+        }
         if (state.tradeType !== 'swap')
             updateStrikeChain();
+        renderPremiumPreview();
+    });
+});
+document.querySelectorAll('.side-tabs button').forEach(btn => {
+    btn.addEventListener('click', () => {
+        state.tradeSide = btn.dataset.side;
+        document.querySelectorAll('.side-tabs button').forEach(b => b.classList.remove('active'));
+        btn.classList.add('active');
         renderPremiumPreview();
     });
 });
@@ -2496,7 +2540,7 @@ async function buyContract() {
             return;
         }
         const positionData = {
-            type: 'swap', symbol, threshold, notional, expiryDay: state.day + expiryDays,
+            type: 'swap', side: 'long', symbol, threshold, notional, expiryDay: state.day + expiryDays,
             qty, premium, boughtDay: state.day, status: 'open', settlePrice: null, dismissed: false
         };
         await commitTrade(positionData, totalCost, 'Bought ' + qty + 'x ' + symbol + ' elimination swap (trigger: deaths >= ' + threshold + ')', msgEl);
@@ -2515,17 +2559,27 @@ async function buyContract() {
             return;
         }
         const premium = Math.round(calc.premium * 100) / 100;
-        const totalCost = premium * qty;
-        if (totalCost > state.cash) {
-            msgEl.className = 'msg err';
-            msgEl.textContent = 'Not enough cash. Need ' + fmtMoney(totalCost) + ', have ' + fmtMoney(state.cash) + '.';
-            return;
+        const totalAmount = premium * qty;
+        const typeLabel = state.tradeType === 'put' ? 'put' : 'call';
+        if (state.tradeSide === 'write') {
+            const positionData = {
+                type: state.tradeType, side: 'short', symbol, strike, expiryDay: state.day + expiryDays,
+                qty, premium, boughtDay: state.day, status: 'open', settlePrice: null, dismissed: false
+            };
+            await commitWrite(positionData, totalAmount, 'Wrote ' + qty + 'x ' + symbol + ' $' + strike.toFixed(2) + ' ' + typeLabel + ' — received', msgEl);
         }
-        const positionData = {
-            type: state.tradeType, symbol, strike, expiryDay: state.day + expiryDays,
-            qty, premium, boughtDay: state.day, status: 'open', settlePrice: null, dismissed: false
-        };
-        await commitTrade(positionData, totalCost, 'Bought ' + qty + 'x ' + symbol + ' $' + strike.toFixed(2) + ' ' + state.tradeType, msgEl);
+        else {
+            if (totalAmount > state.cash) {
+                msgEl.className = 'msg err';
+                msgEl.textContent = 'Not enough cash. Need ' + fmtMoney(totalAmount) + ', have ' + fmtMoney(state.cash) + '.';
+                return;
+            }
+            const positionData = {
+                type: state.tradeType, side: 'long', symbol, strike, expiryDay: state.day + expiryDays,
+                qty, premium, boughtDay: state.day, status: 'open', settlePrice: null, dismissed: false
+            };
+            await commitTrade(positionData, totalAmount, 'Bought ' + qty + 'x ' + symbol + ' $' + strike.toFixed(2) + ' ' + typeLabel, msgEl);
+        }
     }
 }
 async function commitTrade(positionData, totalCost, successMsg, msgEl) {
@@ -2544,13 +2598,34 @@ async function commitTrade(positionData, totalCost, successMsg, msgEl) {
         msgEl.textContent = 'Trade failed: ' + err.message;
     }
 }
+async function commitWrite(positionData, premiumReceived, successMsg, msgEl) {
+    try {
+        const posRef = doc(collection(db, 'users', state.uid, 'positions'));
+        const userRef = doc(db, 'users', state.uid);
+        const batch = writeBatch(db);
+        batch.set(posRef, { ...positionData, cashDelta: premiumReceived, realizedDelta: 0 });
+        batch.update(userRef, { cash: state.cash + premiumReceived, realized: state.realized, lastTradeId: posRef.id });
+        await batch.commit();
+        msgEl.className = 'msg ok';
+        msgEl.textContent = successMsg + ' ' + fmtMoney(premiumReceived) + ', expiring day ' + positionData.expiryDay + '. You now owe the payoff if it finishes in the money.';
+    }
+    catch (err) {
+        msgEl.className = 'msg err';
+        msgEl.textContent = 'Trade failed: ' + err.message;
+    }
+}
 document.getElementById('buyBtn').addEventListener('click', buyContract);
 async function settleOptionPosition(pos, settleDay) {
     const settlePrice = priceAtOrBefore(pos.symbol, settleDay) ?? currentPrice(pos.symbol) ?? 0;
-    const payoff = pos.type === 'put'
+    const intrinsic = pos.type === 'put'
         ? Math.max(0, pos.strike - settlePrice) * pos.qty
         : Math.max(0, settlePrice - pos.strike) * pos.qty;
-    await applySettlement(pos, settlePrice, payoff);
+    if (pos.side === 'short') {
+        await applyWriterSettlement(pos, settlePrice, intrinsic);
+    }
+    else {
+        await applySettlement(pos, settlePrice, intrinsic);
+    }
 }
 async function settleSwapPosition(pos, triggered) {
     const settlePrice = currentPrice(pos.symbol) ?? 0;
@@ -2565,6 +2640,17 @@ async function applySettlement(pos, settlePrice, payoff) {
     const batch = writeBatch(db);
     batch.update(posRef, { status, settlePrice, payoff, cashDelta: payoff, realizedDelta: payoff - cost });
     batch.update(userRef, { cash: state.cash + payoff, realized: state.realized + (payoff - cost), lastTradeId: pos.id });
+    await batch.commit();
+}
+async function applyWriterSettlement(pos, settlePrice, amountOwed) {
+    const received = pos.premium * pos.qty;
+    const status = amountOwed > 0 ? 'lost' : 'won';
+    const realizedDelta = received - amountOwed;
+    const posRef = doc(db, 'users', state.uid, 'positions', pos.id);
+    const userRef = doc(db, 'users', state.uid);
+    const batch = writeBatch(db);
+    batch.update(posRef, { status, settlePrice, payoff: amountOwed, cashDelta: -amountOwed, realizedDelta });
+    batch.update(userRef, { cash: state.cash - amountOwed, realized: state.realized + realizedDelta, lastTradeId: pos.id });
     await batch.commit();
 }
 async function checkAndSettlePositions() {
@@ -2604,12 +2690,13 @@ async function closePositionEarly(posId) {
     const pos = state.positions.find(p => p.id === posId);
     if (!pos || pos.status !== 'open' || pos.type === 'stock')
         return;
-    if (!confirm('Sell this position now at its current fair value?'))
+    const isShort = pos.side === 'short';
+    if (!confirm(isShort ? 'Buy this contract back now at its current fair value to close out the obligation?' : 'Sell this position now at its current fair value?'))
         return;
     const remaining = Math.max(1, pos.expiryDay - state.day);
-    let payoff;
+    let value;
     if (pos.type === 'swap') {
-        payoff = computeSwapPremium(pos.symbol, pos.threshold, pos.notional, remaining).premium * pos.qty;
+        value = computeSwapPremium(pos.symbol, pos.threshold, pos.notional, remaining).premium * pos.qty;
     }
     else {
         const calc = computeOptionPremium(pos.symbol, pos.strike, remaining, pos.type === 'put');
@@ -2617,16 +2704,23 @@ async function closePositionEarly(posId) {
             alert('No price data for that stock right now.');
             return;
         }
-        payoff = calc.premium * pos.qty;
+        value = calc.premium * pos.qty;
     }
-    payoff = Math.round(payoff * 100) / 100;
-    const realizedDelta = payoff - pos.premium * pos.qty;
+    value = Math.round(value * 100) / 100;
     try {
         const posRef = doc(db, 'users', state.uid, 'positions', pos.id);
         const userRef = doc(db, 'users', state.uid);
         const batch = writeBatch(db);
-        batch.update(posRef, { status: payoff > 0 ? 'won' : 'lost', settlePrice: currentPrice(pos.symbol) ?? 0, payoff, closedEarly: true, cashDelta: payoff, realizedDelta });
-        batch.update(userRef, { cash: state.cash + payoff, realized: state.realized + realizedDelta, lastTradeId: pos.id });
+        if (isShort) {
+            const realizedDelta = pos.premium * pos.qty - value;
+            batch.update(posRef, { status: value > 0 ? 'lost' : 'won', settlePrice: currentPrice(pos.symbol) ?? 0, payoff: value, closedEarly: true, cashDelta: -value, realizedDelta });
+            batch.update(userRef, { cash: state.cash - value, realized: state.realized + realizedDelta, lastTradeId: pos.id });
+        }
+        else {
+            const realizedDelta = value - pos.premium * pos.qty;
+            batch.update(posRef, { status: value > 0 ? 'won' : 'lost', settlePrice: currentPrice(pos.symbol) ?? 0, payoff: value, closedEarly: true, cashDelta: value, realizedDelta });
+            batch.update(userRef, { cash: state.cash + value, realized: state.realized + realizedDelta, lastTradeId: pos.id });
+        }
         await batch.commit();
     }
     catch (err) {
@@ -2778,6 +2872,7 @@ function renderPremiumPreview() {
         document.getElementById('pbTime').textContent = fmtMoney(calc.premium);
         document.getElementById('pbPremium').textContent = fmtMoney(calc.premium);
         document.getElementById('pbTotal').textContent = fmtMoney(calc.premium * qty);
+        document.getElementById('rowTotalLabel').textContent = 'Total cost';
         buyBtn.disabled = false;
         buyBtn.textContent = 'Buy ' + qty + 'x ' + symbol + ' Elim. Swap';
     }
@@ -2789,12 +2884,15 @@ function renderPremiumPreview() {
         const calc = computeOptionPremium(symbol, strike, expiryDays, state.tradeType === 'put');
         if (!calc)
             return;
+        const isWrite = state.tradeSide === 'write';
+        const typeLabel = state.tradeType === 'put' ? 'Put' : 'Call';
         document.getElementById('pbIntrinsic').textContent = fmtMoney(calc.intrinsic);
         document.getElementById('pbTime').textContent = fmtMoney(calc.timeValue);
         document.getElementById('pbPremium').textContent = fmtMoney(calc.premium);
         document.getElementById('pbTotal').textContent = fmtMoney(calc.premium * qty);
+        document.getElementById('rowTotalLabel').textContent = isWrite ? 'Total received' : 'Total cost';
         buyBtn.disabled = false;
-        buyBtn.textContent = 'Buy ' + qty + 'x ' + symbol + ' $' + strike.toFixed(2) + ' ' + (state.tradeType === 'put' ? 'Put' : 'Call');
+        buyBtn.textContent = (isWrite ? 'Write ' : 'Buy ') + qty + 'x ' + symbol + ' $' + strike.toFixed(2) + ' ' + typeLabel;
     }
 }
 function stockPositionId(symbol) {
@@ -3009,7 +3107,8 @@ function renderPositions() {
 }
 function renderPositionCard(pos) {
     const price = currentPrice(pos.symbol) || 0;
-    const kindLabel = pos.type === 'swap' ? 'Elimination Swap' : (pos.type === 'put' ? 'Put' : 'Call');
+    const isShort = pos.side === 'short';
+    const kindLabel = (isShort ? 'Written ' : '') + (pos.type === 'swap' ? 'Elimination Swap' : (pos.type === 'put' ? 'Put' : 'Call'));
     if (pos.status === 'open') {
         const daysLeft = pos.expiryDay - state.day;
         let mainLine, markValue, closeValue;
@@ -3024,23 +3123,27 @@ function renderPositionCard(pos) {
             mainLine = 'Strike ' + fmtMoney(pos.strike) + ' · Current ' + fmtMoney(price);
             closeValue = markValue;
         }
+        const premiumLabel = isShort ? 'Premium received' : 'Premium paid';
+        const closeLabel = isShort ? 'Buy back for' : 'Close now for';
+        const closeBtnLabel = isShort ? 'Buy back' : 'Sell';
         return '<div class="pos-card">'
             + '<div class="top"><span class="kind">' + kindLabel + '</span><span class="sym">' + escapeHtml(pos.symbol) + '</span><span class="tag open">OPEN · ' + (daysLeft <= 0 ? 'settles next tick' : daysLeft + ' day' + (daysLeft !== 1 ? 's' : '') + ' left') + '</span></div>'
             + '<div class="detail"><span>' + mainLine + '</span></div>'
             + '<div class="detail"><span>Contracts</span><b>' + pos.qty + '</b></div>'
-            + '<div class="detail"><span>Premium paid</span><b>' + fmtMoney(pos.premium * pos.qty) + '</b></div>'
-            + (pos.type !== 'swap' ? ('<div class="detail"><span>Mark-to-market</span><b>' + fmtMoney(markValue) + '</b></div>') : '')
-            + '<div class="detail"><span>Close now for</span><b>' + fmtMoney(closeValue) + '</b></div>'
-            + '<div style="margin-top:8px; text-align:right;"><button class="close-btn" data-closeid="' + pos.id + '">Sell</button></div>'
+            + '<div class="detail"><span>' + premiumLabel + '</span><b>' + fmtMoney(pos.premium * pos.qty) + '</b></div>'
+            + (pos.type !== 'swap' ? ('<div class="detail"><span>Mark-to-market' + (isShort ? ' (owed if settled now)' : '') + '</span><b>' + fmtMoney(markValue) + '</b></div>') : '')
+            + '<div class="detail"><span>' + closeLabel + '</span><b>' + fmtMoney(closeValue) + '</b></div>'
+            + '<div style="margin-top:8px; text-align:right;"><button class="close-btn" data-closeid="' + pos.id + '">' + closeBtnLabel + '</button></div>'
             + '</div>';
     }
     else {
         const cls = pos.status === 'won' ? 'settled-win' : 'settled-loss';
-        const netPl = pos.payoff - (pos.premium * pos.qty);
+        const netPl = isShort ? (pos.premium * pos.qty - pos.payoff) : (pos.payoff - pos.premium * pos.qty);
+        const payoffLabel = isShort ? 'Paid out' : 'Payoff';
         return '<div class="pos-card ' + cls + '">'
             + '<div class="top"><span class="kind">' + kindLabel + '</span><span class="sym">' + escapeHtml(pos.symbol) + '</span><span class="tag ' + (pos.status === 'won' ? 'win' : 'loss') + '">' + (pos.status === 'won' ? 'SETTLED — WON' : 'SETTLED — LOST') + (pos.closedEarly ? ' (CLOSED EARLY)' : '') + '<button class="dismiss-btn" data-dismissid="' + pos.id + '">Dismiss</button></span></div>'
             + '<div class="detail"><span>Settled at</span><b>' + fmtMoney(pos.settlePrice || 0) + '</b></div>'
-            + '<div class="detail"><span>Payoff</span><b>' + fmtMoney(pos.payoff) + '</b></div>'
+            + '<div class="detail"><span>' + payoffLabel + '</span><b>' + fmtMoney(pos.payoff) + '</b></div>'
             + '<div class="detail"><span>Net P&amp;L</span><b style="color:' + (netPl >= 0 ? 'var(--phosphor)' : 'var(--red)') + '">' + (netPl >= 0 ? '+' : '') + fmtMoney(netPl) + '</b></div>'
             + '</div>';
     }
@@ -3050,7 +3153,7 @@ function renderHistory() {
     const filtered = settled.filter(p => state.historyFilter === 'all' ? true : (state.historyFilter === 'won' ? p.status === 'won' : p.status === 'lost'));
     const sorted = [...filtered].sort((a, b) => b.expiryDay - a.expiryDay);
     const wins = settled.filter(p => p.status === 'won').length, losses = settled.filter(p => p.status === 'lost').length;
-    const totalRealized = settled.reduce((sum, p) => sum + (p.payoff - p.premium * p.qty), 0);
+    const totalRealized = settled.reduce((sum, p) => sum + (p.side === 'short' ? (p.premium * p.qty - p.payoff) : (p.payoff - p.premium * p.qty)), 0);
     const winRate = settled.length ? (wins / settled.length * 100) : 0;
     document.getElementById('historyStats').innerHTML =
         '<div class="stat"><div class="label">CONTRACTS SETTLED</div><div class="value">' + settled.length + '</div></div>'
@@ -3062,8 +3165,9 @@ function renderHistory() {
         return;
     }
     body.innerHTML = sorted.map(pos => {
-        const netPl = pos.payoff - (pos.premium * pos.qty);
-        const kindLabel = pos.type === 'swap' ? 'Swap' : (pos.type === 'put' ? 'Put' : 'Call');
+        const isShort = pos.side === 'short';
+        const netPl = isShort ? (pos.premium * pos.qty - pos.payoff) : (pos.payoff - pos.premium * pos.qty);
+        const kindLabel = (isShort ? 'Short ' : '') + (pos.type === 'swap' ? 'Swap' : (pos.type === 'put' ? 'Put' : 'Call'));
         const strikeCol = pos.type === 'swap' ? ('deaths>=' + pos.threshold) : fmtMoney(pos.strike);
         return '<tr>'
             + '<td>' + kindLabel + '</td><td class="sym">' + escapeHtml(pos.symbol) + '</td><td>' + strikeCol + '</td>'
@@ -3081,7 +3185,8 @@ function computeOpenValue(positions) {
         if (pos.type === 'swap')
             return sum;
         const price = currentPrice(pos.symbol) || 0;
-        return sum + (pos.type === 'put' ? Math.max(0, pos.strike - price) : Math.max(0, price - pos.strike)) * pos.qty;
+        const intrinsic = (pos.type === 'put' ? Math.max(0, pos.strike - price) : Math.max(0, price - pos.strike)) * pos.qty;
+        return sum + (pos.side === 'short' ? -intrinsic : intrinsic);
     }, 0);
 }
 function renderStats() {
