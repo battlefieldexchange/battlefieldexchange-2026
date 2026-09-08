@@ -2173,14 +2173,62 @@ function volatility(symbol) {
     // engages on that floor-price artifact, not on genuine price swings.
     return Math.min(3, Math.max(0.05, Math.sqrt(variance)));
 }
+// Standard normal CDF (Abramowitz & Stegun 7.1.26 approximation via erf, max error ~1.5e-7).
+// This is the building block real options pricing runs on — everything below is just
+// plugging inputs into the same Black-Scholes formula a real broker's pricer uses.
+function erf(x) {
+    const sign = x < 0 ? -1 : 1;
+    x = Math.abs(x);
+    const a1 = 0.254829592, a2 = -0.284496736, a3 = 1.421413741, a4 = -1.453152027, a5 = 1.061405429, p = 0.3275911;
+    const t = 1 / (1 + p * x);
+    const y = 1 - (((((a5 * t + a4) * t) + a3) * t + a2) * t + a1) * t * Math.exp(-x * x);
+    return sign * y;
+}
+function normCdf(x) { return 0.5 * (1 + erf(x / Math.SQRT2)); }
+// A modest baked-in carry rate. Real calls and puts at the exact same strike are never
+// bit-for-bit identical even at-the-money — put-call parity says C - P = S - K*e^(-rT),
+// which is only exactly zero if money is free. This is what makes an ATM call trade a
+// little richer than the matching ATM put, same as on a real options chain.
+const OPTION_RISK_FREE_ANNUAL = 0.05;
+// Real strike chains aren't flat-vol either: the well-known equity "skew" (or "smirk")
+// means low strikes (the put side of the chain) carry a richer implied volatility than
+// high strikes (the call side), because downside protection is in higher demand than
+// upside speculation. Skew is a function of the strike itself, not of call-vs-put, so a
+// call and a put at the SAME strike still price off the same distribution — exactly like
+// a real chain, where a $50 call and $50 put share one implied vol, but a $45 put and a
+// $55 call do not.
+const OPTION_SKEW_SLOPE = 0.35;
 function computeOptionPremium(symbol, strike, daysToExpiry, isPut) {
     const price = currentPrice(symbol);
-    if (price === null)
+    if (price === null || !(strike > 0))
         return null;
     const intrinsic = isPut ? Math.max(0, strike - price) : Math.max(0, price - strike);
-    const vol = volatility(symbol);
-    const timeValue = price * vol * Math.sqrt(Math.max(1, daysToExpiry)) * 0.4;
-    const premium = Math.max(0.5, intrinsic + timeValue);
+    const T = Math.max(1, daysToExpiry);
+    const baseVol = volatility(symbol);
+    const logMoneyness = Math.log(strike / price);
+    // Floor is deliberately looser than volatility()'s own 0.05 floor: baseVol sits right
+    // at that floor for any quiet/new symbol, and re-clamping to the same 0.05 here would
+    // swallow the skew's downward adjustment on the call side every time, silently undoing
+    // the skew whenever it's needed most.
+    const skewedVol = Math.min(3, Math.max(0.01, baseVol * (1 - OPTION_SKEW_SLOPE * logMoneyness)));
+    const sigmaSqrtT = skewedVol * Math.sqrt(T);
+    const rT = (OPTION_RISK_FREE_ANNUAL / 365) * T;
+    const discount = Math.exp(-rT);
+    let theoretical;
+    if (sigmaSqrtT < 1e-8) {
+        // No meaningful vol or time left — worth exactly its expiry payoff, nothing more.
+        theoretical = isPut ? Math.max(0, strike * discount - price) : Math.max(0, price - strike * discount);
+    }
+    else {
+        const d1 = (Math.log(price / strike) + rT + 0.5 * sigmaSqrtT * sigmaSqrtT) / sigmaSqrtT;
+        const d2 = d1 - sigmaSqrtT;
+        theoretical = isPut
+            ? strike * discount * normCdf(-d2) - price * normCdf(-d1)
+            : price * normCdf(d1) - strike * discount * normCdf(d2);
+    }
+    theoretical = Math.max(theoretical, intrinsic); // floor at intrinsic; guards float noise
+    const timeValue = theoretical - intrinsic;
+    const premium = Math.max(0.5, theoretical);
     return { price, intrinsic, timeValue, premium: Math.round(premium * 100) / 100 };
 }
 function generateStrikeChain(price) {
@@ -2374,46 +2422,111 @@ document.getElementById('dbgMigrateReports').addEventListener('click', async () 
         out.textContent = 'Cancelled — no changes made.';
         return;
     }
-    const ops = [];
-    toDelete.forEach(rep => ops.push({ type: 'delete', rep }));
-    toRekey.forEach(({ rep, hash }) => ops.push({ type: 'rekey', rep, hash }));
     const CHUNK = 200;
-    let done = 0;
-    out.textContent = 'Working… 0 / ' + ops.length;
-    try {
-        for (let i = 0; i < ops.length; i += CHUNK) {
-            const chunk = ops.slice(i, i + CHUNK);
+    const isPermissionError = e => !!e && (e.code === 'permission-denied' || /insufficient permissions/i.test(e.message || ''));
+    const describeRep = rep => (rep.filename || rep.id) + ' (day ' + rep.day + ')';
+
+    // Deletes and rekeys are run as two separate passes on purpose. A batch commit is
+    // all-or-nothing: one denied write anywhere in a chunk used to fail the ENTIRE
+    // chunk, including unrelated ops that would otherwise have gone through fine —
+    // which is exactly how this got stuck at 0 done with no indication of which op,
+    // or even which *kind* of op, was actually the problem. Splitting them means a
+    // problem on one side can no longer block progress on the other, and the
+    // per-item fallback below means a problem on one report can't block the rest.
+    let deletedCount = 0;
+    const deleteFailures = [];
+    for (let i = 0; i < toDelete.length; i += CHUNK) {
+        const chunk = toDelete.slice(i, i + CHUNK);
+        out.textContent = 'Deleting exact duplicates… ' + deletedCount + ' / ' + toDelete.length;
+        try {
             const batch = writeBatch(db);
-            chunk.forEach(op => {
-                if (op.type === 'delete') {
-                    batch.delete(doc(db, 'reports', op.rep.id));
-                }
-                else {
-                    // Old report docs can predate a field being added (e.g. uploadedByUsername),
-                    // in which case it reads back as undefined — and Firestore's set() throws
-                    // synchronously on any undefined field, killing this loop with no on-screen
-                    // error. Default anything missing to null (a value Firestore accepts) instead.
-                    const day = op.rep.day ?? null;
-                    const filename = op.rep.filename ?? null;
-                    const uploadedBy = op.rep.uploadedBy ?? null;
-                    const uploadedByUsername = op.rep.uploadedByUsername ?? null;
-                    const uploadedAt = op.rep.uploadedAt ?? null;
-                    const isSynthetic = !!op.rep.isSynthetic;
-                    const players = op.rep.players ?? [];
-                    batch.set(doc(db, 'reports', op.hash), { day, filename, uploadedBy, uploadedByUsername, uploadedAt, isSynthetic, players });
-                    batch.delete(doc(db, 'reports', op.rep.id));
-                }
-            });
+            chunk.forEach(rep => batch.delete(doc(db, 'reports', rep.id)));
             await batch.commit();
-            done += chunk.length;
-            out.textContent = 'Working… ' + done + ' / ' + ops.length;
+            deletedCount += chunk.length;
+        }
+        catch (err) {
+            // Chunk failed together — retry one at a time so a single bad doc
+            // can't hide behind (or block) the rest of the chunk.
+            for (const rep of chunk) {
+                try {
+                    await deleteDoc(doc(db, 'reports', rep.id));
+                    deletedCount++;
+                }
+                catch (singleErr) {
+                    deleteFailures.push({ rep, err: singleErr });
+                }
+            }
         }
     }
-    catch (err) {
-        out.textContent = 'Stopped after ' + done + ' / ' + ops.length + ' — ' + err.message + '. Everything up to that point was already saved (batches commit in groups of ' + CHUNK + '), so it is safe to just click the button again to pick up where this left off.';
+
+    let rekeyedCount = 0;
+    const rekeyFailures = [];
+    for (let i = 0; i < toRekey.length; i += CHUNK) {
+        const chunk = toRekey.slice(i, i + CHUNK);
+        out.textContent = 'Re-filing under duplicate-proof IDs… ' + rekeyedCount + ' / ' + toRekey.length;
+        const buildData = rep => ({
+            // Old report docs can predate a field being added (e.g. uploadedByUsername),
+            // in which case it reads back as undefined — and Firestore's set() throws
+            // synchronously on any undefined field, killing this loop with no on-screen
+            // error. Default anything missing to null (a value Firestore accepts) instead.
+            day: rep.day ?? null, filename: rep.filename ?? null,
+            uploadedBy: rep.uploadedBy ?? null, uploadedByUsername: rep.uploadedByUsername ?? null,
+            uploadedAt: rep.uploadedAt ?? null, isSynthetic: !!rep.isSynthetic, players: rep.players ?? []
+        });
+        try {
+            const batch = writeBatch(db);
+            chunk.forEach(({ rep, hash }) => {
+                batch.set(doc(db, 'reports', hash), buildData(rep));
+                batch.delete(doc(db, 'reports', rep.id));
+            });
+            await batch.commit();
+            rekeyedCount += chunk.length;
+        }
+        catch (err) {
+            // Same idea as deletes: fall back to one report at a time. Each report's
+            // create+delete pair is still committed as its own 2-write batch, so a
+            // report is never left half-migrated (new doc created but old one not
+            // cleaned up, or vice versa) even in the fallback path.
+            for (const { rep, hash } of chunk) {
+                try {
+                    const single = writeBatch(db);
+                    single.set(doc(db, 'reports', hash), buildData(rep));
+                    single.delete(doc(db, 'reports', rep.id));
+                    await single.commit();
+                    rekeyedCount++;
+                }
+                catch (singleErr) {
+                    rekeyFailures.push({ rep, err: singleErr });
+                }
+            }
+        }
+    }
+
+    const failCount = deleteFailures.length + rekeyFailures.length;
+    if (failCount === 0) {
+        out.textContent = 'Done. Deleted ' + toDelete.length + ' duplicate report(s) and re-filed ' + toRekey.length + ' report(s) under duplicate-proof IDs. New uploads will now be checked against all of them, no matter how old.';
         return;
     }
-    out.textContent = 'Done. Deleted ' + toDelete.length + ' duplicate report(s) and re-filed ' + toRekey.length + ' report(s) under duplicate-proof IDs. New uploads will now be checked against all of them, no matter how old.';
+    const lines = [
+        'Deleted ' + deletedCount + ' / ' + toDelete.length + ' duplicate report(s).',
+        'Re-filed ' + rekeyedCount + ' / ' + toRekey.length + ' report(s) under duplicate-proof IDs.',
+        '',
+        failCount + ' operation(s) were rejected and left untouched — nothing was lost, they still exist under their current ID and are safe to retry later:'
+    ];
+    [...deleteFailures.map(f => ({ ...f, kind: 'delete' })), ...rekeyFailures.map(f => ({ ...f, kind: 'rekey' }))]
+        .slice(0, 25)
+        .forEach(f => lines.push('  • [' + f.kind + '] ' + describeRep(f.rep) + ' — ' + f.err.message));
+    if (failCount > 25)
+        lines.push('  …and ' + (failCount - 25) + ' more.');
+    if (rekeyFailures.length > 0 && rekeyFailures.every(f => isPermissionError(f.err))) {
+        lines.push('');
+        lines.push('All the rekey failures are permission-denied, which is a Firestore Security Rules rejection, not an app bug — the client code isn\'t able to work around it. The likely cause: re-filing a report under a new ID is a "create" as far as your rules are concerned, and if your create rule for /reports requires uploadedBy to equal the signed-in user\'s own uid (a common anti-spoofing check), it will reject re-creating any report that was originally uploaded by someone other than this admin account, even though this admin account is otherwise allowed to delete it. If that matches your setup, add the same admin bypass your delete rule already has, e.g.: allow create: if request.auth.uid == request.resource.data.uploadedBy || exists(/databases/$(database)/documents/admins/$(request.auth.uid)); Update the rule in the Firebase console, then click this button again — everything above already succeeded and will not be redone.');
+    }
+    else if (deleteFailures.length > 0 && deleteFailures.every(f => isPermissionError(f.err))) {
+        lines.push('');
+        lines.push('The delete failures are permission-denied — double-check that this admin account still has a doc under /admins/{uid} and that your delete rule for /reports allows it.');
+    }
+    out.textContent = lines.join('\n');
 });
 document.getElementById('dbgAdvanceDay').addEventListener('click', async () => {
     const counterRef = doc(db, 'counters', 'day');
