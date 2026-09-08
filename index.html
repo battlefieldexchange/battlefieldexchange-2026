@@ -1,0 +1,3615 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Battlefield Exchange</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js"></script>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@500;600;700;800&family=Rajdhani:wght@500;600;700&display=swap" rel="stylesheet">
+<style>
+  
+  :root{
+    --bg: #050c0c;
+    --panel: #0a2321;
+    --panel-2: #0e2e2b;
+    --line: #3f7d78;
+    --phosphor: #7fe6da;
+    --phosphor-dim: #3f8f87;
+    --amber: #e0b34d;
+    --red: #ff6b5d;
+    --blue: #5db0e6;
+    --purple: #c792ea;
+    --text: #d3ede8;
+    --text-dim: #6f9994;
+    --mono: "IBM Plex Mono", "Courier New", monospace;
+    --sans: "Rajdhani", Arial, sans-serif;
+    --display: "Orbitron", var(--sans);
+  }
+  *{box-sizing:border-box;}
+  html,body{margin:0;padding:0;background:var(--bg);color:var(--text);font-family:var(--mono);}
+  body{
+    background-image:
+      radial-gradient(ellipse at top, rgba(127,230,218,0.06), transparent 60%),
+      radial-gradient(ellipse 60% 40% at 15% 85%, rgba(63,125,120,0.05), transparent 70%),
+      repeating-linear-gradient(180deg, rgba(255,255,255,0.012) 0px, rgba(255,255,255,0.012) 1px, transparent 1px, transparent 3px);
+    min-height:100vh;
+    padding-bottom:60px;
+  }
+  ::selection{background:var(--phosphor-dim);color:#000;}
+  a{color:var(--phosphor);}
+  .hidden{display:none !important;}
+
+  .auth-wrap{ max-width:420px; margin:9vh auto 0; padding:0 20px; }
+  .auth-card{ background:var(--panel); border:1px solid var(--line); border-radius:2px; padding:28px 26px; box-shadow:0 0 0 1px rgba(63,125,120,0.25) inset, 0 0 30px rgba(127,230,218,0.07); }
+  .auth-card h1{ font-family:var(--display); font-weight:700; color:var(--phosphor); font-size:24px; letter-spacing:1px; margin:0 0 4px; text-shadow:0 0 18px rgba(127,230,218,0.4); }
+  .auth-card .tagline{font-size:12px; color:var(--text-dim); margin-bottom:22px;}
+  .auth-tabs{display:flex; gap:6px; margin-bottom:18px;}
+  .auth-tabs button{ flex:1; font-family:var(--sans); font-weight:600; font-size:14px; background:var(--panel-2); border:1px solid var(--line); color:var(--text-dim); padding:8px; border-radius:2px; cursor:pointer; }
+  .auth-tabs button.active{color:var(--phosphor); border-color:var(--phosphor-dim);}
+  .auth-msg{font-size:12px; min-height:16px; margin-top:10px;}
+  .auth-msg.err{color:var(--red);}
+  .auth-msg.ok{color:var(--phosphor);}
+  .auth-loading{text-align:center; color:var(--text-dim); padding:60px 20px; font-size:13px;}
+
+  header.exchange-header{
+    border-bottom:1px solid var(--line); padding:22px 28px 18px; display:flex; justify-content:space-between;
+    align-items:flex-end; flex-wrap:wrap; gap:14px; background:linear-gradient(180deg, rgba(127,230,218,0.04), transparent);
+  }
+  .brand{display:flex;align-items:baseline;gap:14px;}
+  .brand h1{ font-family:var(--display); font-weight:700; font-size:28px; letter-spacing:1px; margin:0; color:var(--phosphor); text-shadow:0 0 18px rgba(127,230,218,0.4); }
+  .brand .tick{ font-size:13px; color:var(--text-dim); border:1px solid var(--line); padding:3px 8px; border-radius:2px; }
+  .session-stats{display:flex;gap:22px;font-size:13px; align-items:flex-end;}
+  .session-stats .stat{text-align:right;}
+  .session-stats .stat .label{color:var(--text-dim);font-size:11px;}
+  .session-stats .stat .value{font-size:19px;color:var(--text);}
+  .session-stats .stat .value.up{color:var(--phosphor);}
+  .session-stats .stat .value.down{color:var(--red);}
+  .who{font-size:12px; color:var(--text-dim); text-align:right;}
+  .who b{color:var(--text);}
+  .who .admin-pill{color:var(--amber); border:1px solid var(--amber); border-radius:10px; padding:1px 7px; font-size:10px; margin-left:6px;}
+  .logout-btn{ font-family:var(--mono); font-size:11px; background:transparent; border:1px solid var(--line); color:var(--text-dim); padding:3px 9px; border-radius:2px; cursor:pointer; margin-top:4px; }
+  .logout-btn:hover{border-color:var(--red); color:var(--red);}
+
+  main{max-width:1280px;margin:0 auto;padding:22px 24px;}
+  .grid{display:grid;grid-template-columns:1.6fr 1fr;gap:20px;}
+  @media (max-width: 980px){ .grid{grid-template-columns:1fr;} }
+
+  .panel{background:var(--panel); border:1px solid var(--line); border-radius:2px; box-shadow:0 0 0 1px rgba(63,125,120,0.25) inset, 0 0 26px rgba(127,230,218,0.05);}
+  .panel-head{ padding:11px 16px; border-bottom:1px solid var(--line); display:flex; justify-content:space-between; align-items:center; position:relative; background:linear-gradient(180deg, rgba(127,230,218,0.06), transparent); }
+  .panel-head::after{ content:''; position:absolute; top:0; right:0; width:0; height:0; border-style:solid; border-width:0 13px 13px 0; border-color:transparent var(--line) transparent transparent; opacity:.6; pointer-events:none; }
+  .panel-head h2{font-family:var(--display); font-size:15px; font-weight:600; margin:0; color:var(--text); letter-spacing:0.8px; text-transform:uppercase;}
+  .panel-head .sub{font-size:11px;color:var(--text-dim);}
+  .panel-body{padding:14px 16px;}
+
+  .dropzone{ border:1px dashed var(--line); border-radius:3px; padding:22px; text-align:center; color:var(--text-dim); font-size:13px; cursor:pointer; transition:border-color .15s, color .15s; }
+  .dropzone:hover, .dropzone.drag{border-color:var(--phosphor-dim); color:var(--text);}
+  .dropzone input{display:none;}
+  .dropzone .big{font-family:var(--sans); font-size:16px; color:var(--text); margin-bottom:4px;}
+
+  .report-log{margin-top:12px; font-size:12px; max-height:160px; overflow-y:auto;}
+  .report-log .row{display:flex; justify-content:space-between; gap:10px; padding:5px 0; border-bottom:1px solid var(--line); color:var(--text-dim);}
+  .report-log .row span:first-child{color:var(--text); flex-shrink:0;}
+  .report-log .row .del-report{ font-family:var(--mono); font-size:10px; background:transparent; border:1px solid var(--red); color:var(--red); padding:1px 7px; border-radius:2px; cursor:pointer; }
+  .report-log .row .del-report:hover{background:rgba(255,93,93,0.12);}
+  #dupeResults .del-report{ font-family:var(--mono); font-size:10px; background:transparent; border:1px solid var(--red); color:var(--red); padding:1px 7px; border-radius:2px; cursor:pointer; margin-left:8px; }
+  #dupeResults .del-report:hover{background:rgba(255,93,93,0.12);}
+  #dupeResults .dupe-group{ margin-bottom:8px; border-bottom:1px solid var(--line); padding-bottom:8px; }
+  #dupeResults .dupe-group div{ padding:2px 0; }
+
+  .weight-row{display:grid; grid-template-columns:110px 1fr 42px; align-items:center; gap:10px; margin-bottom:10px; font-size:12px;}
+  .weight-row label{color:var(--text-dim);}
+  .weight-row input[type=range]{accent-color:var(--phosphor-dim); width:100%;}
+  .weight-row .val{text-align:right; color:var(--phosphor);}
+  .weight-note{font-size:11px; color:var(--text-dim); margin-top:6px; line-height:1.5;}
+
+  table.ticker{width:100%; border-collapse:collapse; font-size:13px;}
+  table.ticker thead th{ text-align:left; font-family:var(--sans); font-weight:600; font-size:12px; color:var(--text-dim); border-bottom:1px solid var(--line); padding:6px 8px; position:sticky; top:0; background:var(--panel); }
+  table.ticker td{padding:7px 8px; border-bottom:1px solid rgba(36,53,42,0.6); vertical-align:middle;}
+  table.ticker tbody tr:hover{background:rgba(127,230,218,0.04);}
+  .sym{font-family:var(--sans); font-weight:600; letter-spacing:0.4px;}
+  .cls-pill{font-weight:600;}
+  .price{font-weight:600;}
+  .chg{font-size:11px;}
+  .chg.up{color:var(--phosphor);}
+  .chg.down{color:var(--red);}
+  .chg.flat{color:var(--text-dim);}
+  .spark{width:70px; height:24px; display:block;}
+  .buy-btn{ font-family:var(--mono); font-size:11px; background:transparent; border:1px solid var(--phosphor-dim); color:var(--phosphor); padding:4px 9px; border-radius:2px; cursor:pointer; }
+  .buy-btn:hover{background:rgba(127,230,218,0.12);}
+  .empty-state{color:var(--text-dim); font-size:13px; padding:30px 10px; text-align:center;}
+
+  .type-tabs{display:flex; gap:6px; margin-bottom:14px;}
+  .type-tabs button{ flex:1; font-family:var(--sans); font-weight:600; font-size:13px; background:var(--panel-2); border:1px solid var(--line); color:var(--text-dim); padding:8px 4px; border-radius:2px; cursor:pointer; }
+  .type-tabs button.active.call{color:var(--phosphor); border-color:var(--phosphor-dim);}
+  .type-tabs button.active.put{color:var(--red); border-color:var(--red);}
+  .type-tabs button.active.swap{color:var(--purple); border-color:var(--purple);}
+  .type-desc{font-size:11px; color:var(--text-dim); margin-bottom:14px; line-height:1.5; border-left:2px solid var(--line); padding-left:8px;}
+
+  .field{margin-bottom:12px;}
+  .field label{display:block; font-size:11px; color:var(--text-dim); margin-bottom:4px;}
+  .field select, .field input{ width:100%; background:var(--panel-2); border:1px solid var(--line); color:var(--text); padding:7px 8px; font-family:var(--mono); font-size:13px; border-radius:2px; }
+  .field select:focus, .field input:focus{outline:none; border-color:var(--phosphor-dim);}
+  .premium-box{ background:var(--panel-2); border:1px solid var(--line); border-radius:3px; padding:12px; font-size:12px; margin:10px 0 14px; }
+  .premium-box .line{display:flex; justify-content:space-between; padding:2px 0; color:var(--text-dim);}
+  .premium-box .line b{color:var(--text); font-weight:600;}
+  .premium-box .total{border-top:1px solid var(--line); margin-top:6px; padding-top:6px;}
+  .primary-btn{ width:100%; background:var(--phosphor-dim); color:#03130a; border:none; font-family:var(--sans); font-weight:700; font-size:15px; padding:10px; border-radius:2px; cursor:pointer; letter-spacing:0.3px; }
+  .primary-btn:hover{background:var(--phosphor);}
+  .primary-btn:disabled{background:var(--line); color:var(--text-dim); cursor:not-allowed;}
+  .msg{font-size:12px; margin-top:8px; min-height:16px;}
+  .msg.err{color:var(--red);}
+  .msg.ok{color:var(--phosphor);}
+
+  .pos-card{border:1px solid var(--line); border-radius:3px; padding:10px 12px; margin-bottom:10px; font-size:12px;}
+  .pos-card .top{display:flex; justify-content:space-between; align-items:baseline; margin-bottom:4px; flex-wrap:wrap; gap:4px;}
+  .pos-card .top .sym{font-size:14px;}
+  .pos-card .detail{color:var(--text-dim); display:flex; justify-content:space-between;}
+  .pos-card .detail b{color:var(--text);}
+  .pos-card.settled-win{border-color:var(--phosphor-dim); background:rgba(127,230,218,0.05);}
+  .pos-card.settled-loss{border-color:var(--red); background:rgba(255,93,93,0.05);}
+  .pos-card .kind{font-size:10px; color:var(--text-dim); text-transform:uppercase; letter-spacing:0.5px;}
+  .tag{font-size:10px; padding:1px 6px; border-radius:10px; border:1px solid currentColor;}
+  .tag.open{color:var(--amber);}
+  .tag.win{color:var(--phosphor);}
+  .tag.loss{color:var(--red);}
+
+  .chart-wrap{padding:14px 16px;}
+  .legend-pills{display:flex; flex-wrap:wrap; gap:6px; margin-bottom:10px;}
+  .legend-pills button{ font-family:var(--mono); font-size:11px; background:var(--panel-2); border:1px solid var(--line); color:var(--text-dim); padding:4px 9px; border-radius:12px; cursor:pointer; }
+  .legend-pills button.active{color:#03130a; font-weight:600;}
+
+  .debug-panel{border-color:#5d3a1a;}
+  .debug-panel .panel-head{background:rgba(255,184,77,0.06);}
+  .debug-panel .panel-head h2{color:var(--amber);}
+  .debug-grid{display:grid; grid-template-columns:repeat(auto-fit, minmax(160px,1fr)); gap:8px;}
+  .debug-btn{ font-family:var(--mono); font-size:12px; background:var(--panel-2); border:1px solid #5d3a1a; color:var(--amber); padding:8px 10px; border-radius:2px; cursor:pointer; }
+  .debug-btn:hover{background:rgba(255,184,77,0.12);}
+  .debug-inline{display:flex; gap:6px; align-items:center;}
+  .debug-inline input{width:70px; background:var(--panel-2); border:1px solid var(--line); color:var(--text); padding:7px 8px; font-family:var(--mono); border-radius:2px;}
+  .dismiss-btn{ font-family:var(--mono); font-size:10px; background:transparent; border:1px solid var(--line); color:var(--text-dim); padding:2px 7px; border-radius:2px; cursor:pointer; margin-left:8px; }
+  .dismiss-btn:hover{border-color:var(--text); color:var(--text);}
+  .close-btn{ font-family:var(--mono); font-size:11px; background:transparent; border:1px solid var(--phosphor-dim); color:var(--phosphor); padding:4px 10px; border-radius:2px; cursor:pointer; }
+  .close-btn:hover{background:rgba(127,230,218,0.12);}
+
+  .subnav{max-width:1280px; margin:0 auto; padding:14px 24px 0; display:flex; gap:8px; border-bottom:1px solid var(--line);}
+  .subnav button{ font-family:var(--sans); font-size:15px; font-weight:600; background:transparent; border:none; color:var(--text-dim); padding:8px 4px 12px; cursor:pointer; border-bottom:2px solid transparent; margin-right:14px; }
+  .subnav button.active{color:var(--phosphor); border-bottom-color:var(--phosphor);}
+  .subnav button:hover{color:var(--text);}
+
+  .admin-note{ font-size:11px; color:var(--text-dim); border:1px solid var(--line); border-radius:3px; padding:8px 10px; margin-bottom:12px; line-height:1.5; }
+  .uid-box{ font-size:11px; color:var(--text-dim); border:1px solid var(--line); border-radius:3px; padding:8px 10px; margin-bottom:12px; word-break:break-all; }
+  .uid-box b{color:var(--phosphor); user-select:all;}
+
+  table.history{width:100%; border-collapse:collapse; font-size:13px;}
+  table.history thead th{ text-align:left; font-family:var(--sans); font-weight:600; font-size:12px; color:var(--text-dim); border-bottom:1px solid var(--line); padding:8px; }
+  table.history td{padding:8px; border-bottom:1px solid rgba(36,53,42,0.6);}
+  table.history tr:hover{background:rgba(127,230,218,0.04);}
+  .win-text{color:var(--phosphor);}
+  .loss-text{color:var(--red);}
+  .filter-pills{display:flex; gap:6px; margin-bottom:14px;}
+  .filter-pills button{ font-family:var(--mono); font-size:12px; background:var(--panel-2); border:1px solid var(--line); color:var(--text-dim); padding:5px 12px; border-radius:12px; cursor:pointer; }
+  .filter-pills button.active{color:#03130a; background:var(--phosphor); border-color:var(--phosphor); font-weight:600;}
+  .history-stats{display:flex; gap:24px; margin-bottom:16px; flex-wrap:wrap;}
+  .history-stats .stat{font-size:13px;}
+  .history-stats .stat .label{color:var(--text-dim); font-size:11px;}
+  .history-stats .stat .value{font-size:20px;}
+
+  .elo-summary{display:flex; gap:24px; margin-bottom:16px; flex-wrap:wrap;}
+  .elo-summary .stat{font-size:13px;}
+  .elo-summary .stat .label{color:var(--text-dim); font-size:11px;}
+  .elo-summary .stat .value{font-size:18px;}
+  .elo-pos{color:var(--phosphor);}
+  .elo-neg{color:var(--red);}
+  .player-link{cursor:pointer; text-decoration:underline dotted; text-underline-offset:3px;}
+  .player-link:hover{color:var(--phosphor);}
+  .class-expand-row td{padding:0; border-bottom:1px solid var(--line);}
+  .class-expand{background:var(--panel-2); border-left:2px solid var(--phosphor-dim); padding:12px 16px; margin:2px 0;}
+  .class-expand-meta{color:var(--text-dim); font-size:12px; margin-bottom:8px;}
+  .class-row{display:flex; justify-content:space-between; align-items:center; padding:6px 0; border-bottom:1px solid var(--line); font-size:13px;}
+  .class-row:last-child{border-bottom:none;}
+  .class-row .count{color:var(--text-dim); font-size:12px;}
+
+  ::-webkit-scrollbar{width:8px; height:8px;}
+  ::-webkit-scrollbar-track{background:var(--panel);}
+  ::-webkit-scrollbar-thumb{background:var(--line); border-radius:4px;}
+
+  .image-converter{margin-top:14px;}
+  .image-dropzone{border:1px dashed var(--line);border-radius:3px;padding:18px;text-align:center;color:var(--text-dim);font-size:13px;cursor:pointer;transition:border-color .15s,color .15s;}
+  .image-dropzone:hover,.image-dropzone.drag{border-color:var(--phosphor-dim);color:var(--text);}
+  .image-dropzone input{display:none;}
+  .image-dropzone .big{font-family:var(--sans);font-size:16px;color:var(--text);margin-bottom:4px;}
+  .ocr-status{font-size:11px;color:var(--text-dim);margin-top:10px;min-height:16px;line-height:1.5;}
+  .ocr-status.ok{color:var(--phosphor);}
+  .ocr-status.err{color:var(--red);}
+  .ocr-progress{height:3px;background:var(--line);margin-top:7px;border-radius:2px;overflow:hidden;display:none;}
+  .ocr-progress > div{height:100%;width:0;background:var(--phosphor-dim);transition:width .15s;}
+  .ocr-actions{display:flex;gap:7px;margin-top:10px;}
+  .ocr-actions button{flex:1;font-family:var(--mono);font-size:11px;background:transparent;border:1px solid var(--line);color:var(--text-dim);padding:6px 9px;border-radius:2px;cursor:pointer;}
+  .ocr-actions button:hover{border-color:var(--phosphor-dim);color:var(--phosphor);}
+  .ocr-actions button:disabled{opacity:.45;cursor:not-allowed;}
+
+  
+  .outcome-input-row{display:flex; gap:6px; margin-bottom:8px; align-items:center;}
+  .outcome-input-row input{ flex:1; background:var(--panel-2); border:1px solid var(--line); color:var(--text); padding:7px 8px; font-family:var(--mono); font-size:13px; border-radius:2px; }
+  .outcome-input-row input:focus{outline:none; border-color:var(--phosphor-dim);}
+  .remove-outcome-btn{ font-family:var(--mono); font-size:13px; background:transparent; border:1px solid var(--line); color:var(--text-dim); width:28px; height:28px; border-radius:2px; cursor:pointer; flex-shrink:0; }
+  .remove-outcome-btn:hover{border-color:var(--red); color:var(--red);}
+  .add-outcome-btn{ font-family:var(--mono); font-size:12px; background:transparent; border:1px dashed var(--line); color:var(--text-dim); padding:6px 10px; border-radius:2px; cursor:pointer; width:100%; margin-bottom:12px; }
+  .add-outcome-btn:hover{border-color:var(--phosphor-dim); color:var(--phosphor);}
+
+  .bet-filter-pills{display:flex; gap:6px; margin-bottom:14px;}
+
+  .bet-card{border:1px solid var(--line); border-radius:2px; padding:14px 16px; margin-bottom:14px; background:var(--panel-2);}
+  .bet-card .bet-top{display:flex; justify-content:space-between; align-items:flex-start; gap:10px; margin-bottom:4px;}
+  .bet-card .bet-title{font-family:var(--display); font-size:15px; font-weight:600; color:var(--text); letter-spacing:0.3px;}
+  .bet-card .bet-meta{font-size:11px; color:var(--text-dim); margin-bottom:12px;}
+  .bet-card .bet-meta b{color:var(--text);}
+
+  .outcome-row{margin-bottom:10px;}
+  .outcome-row .outcome-label-line{display:flex; justify-content:space-between; font-size:12px; margin-bottom:4px;}
+  .outcome-row .outcome-label-line .name{color:var(--text); font-weight:600;}
+  .outcome-row .outcome-label-line .odds{color:var(--text-dim);}
+  .outcome-bar{height:8px; background:var(--panel); border:1px solid var(--line); border-radius:2px; overflow:hidden;}
+  .outcome-bar .fill{height:100%; transition:width .2s;}
+  .outcome-row.winner .outcome-label-line .name{color:var(--phosphor);}
+  .outcome-row.winner .outcome-label-line .name::after{content:' — WON'; font-size:10px; letter-spacing:0.5px;}
+
+  .wager-controls{display:flex; gap:8px; align-items:center; margin-top:12px; flex-wrap:wrap;}
+  .wager-controls select, .wager-controls input{ background:var(--panel); border:1px solid var(--line); color:var(--text); padding:7px 8px; font-family:var(--mono); font-size:13px; border-radius:2px; }
+  .wager-controls select{flex:1; min-width:120px;}
+  .wager-controls input{width:110px;}
+  .wager-controls button{ font-family:var(--sans); font-weight:600; font-size:13px; background:var(--phosphor-dim); color:#04130f; border:none; padding:8px 14px; border-radius:2px; cursor:pointer; }
+  .wager-controls button:hover{background:var(--phosphor);}
+  .wager-controls button:disabled{background:var(--line); color:var(--text-dim); cursor:not-allowed;}
+  .wager-quote{font-size:11px; color:var(--text-dim); margin-top:6px; min-height:14px;}
+  .wager-quote b{color:var(--phosphor);}
+
+  .bet-card-footer{display:flex; justify-content:space-between; align-items:center; margin-top:10px;}
+  .bet-status-tag{font-size:10px; padding:2px 8px; border-radius:10px; border:1px solid currentColor; text-transform:uppercase; letter-spacing:0.5px;}
+  .bet-status-tag.open{color:var(--phosphor);}
+  .bet-status-tag.resolved{color:var(--amber);}
+  .bet-status-tag.cancelled{color:var(--text-dim);}
+
+  .bet-status-tag.closed{color:var(--amber);}
+  .admin-resolve{border:1px solid rgba(224,179,77,0.35); border-radius:2px; background:rgba(224,179,77,0.05); padding:10px 12px; margin-top:12px;}
+  .admin-resolve .label{font-size:10px; color:var(--amber); text-transform:uppercase; letter-spacing:0.5px; margin-bottom:6px;}
+  .admin-resolve select{width:100%; margin-bottom:8px; background:var(--panel-2); border:1px solid var(--line); color:var(--text); padding:7px 8px; font-family:var(--mono); font-size:13px; border-radius:2px;}
+  .admin-resolve button{width:100%; font-family:var(--sans); font-weight:600; font-size:13px; background:transparent; border:1px solid var(--amber); color:var(--amber); padding:8px; border-radius:2px; cursor:pointer; margin-bottom:6px;}
+  .admin-resolve button:hover{background:rgba(224,179,77,0.12);}
+  .admin-resolve button.dismiss-btn{border-color:var(--line); color:var(--text-dim); margin-left:0;}
+  .admin-resolve button.dismiss-btn:hover{border-color:var(--text); color:var(--text); background:transparent;}
+</style>
+</head>
+<body>
+
+<div id="authScreen" class="auth-wrap">
+  <div class="auth-card">
+    <h1>BATTLEFIELD EXCHANGE</h1>
+    <div class="tagline">Sign in to trade. Each account gets its own cash and positions on a shared market.</div>
+    <div class="auth-tabs">
+      <button id="tabSignIn" class="active">Sign In</button>
+      <button id="tabSignUp">Create Account</button>
+    </div>
+    <div class="field"><label>Username</label><input type="text" id="authUsername" autocomplete="username" maxlength="20" placeholder="letters, numbers, underscore"></div>
+    <div class="field"><label>Password</label><input type="password" id="authPassword" autocomplete="current-password"></div>
+    <button class="primary-btn" id="authSubmit">Sign In</button>
+    <div class="auth-msg" id="authMsg"></div>
+  </div>
+</div>
+
+<div id="loadingScreen" class="auth-loading hidden">Connecting to exchange…</div>
+
+<div id="appRoot" class="hidden">
+
+<header class="exchange-header">
+  <div class="brand">
+    <h1>BATTLEFIELD EXCHANGE</h1>
+    <span class="tick" id="dayTick">DAY 0 — AWAITING FIRST REPORT</span>
+  </div>
+  <div class="session-stats">
+    <div class="stat"><div class="label">CASH</div><div class="value" id="statCash">$10,000.00</div></div>
+    <div class="stat"><div class="label">OPEN VALUE</div><div class="value" id="statOpenVal">$0.00</div></div>
+    <div class="stat"><div class="label">REALIZED P&amp;L</div><div class="value" id="statRealized">$0.00</div></div>
+    <div class="stat"><div class="label">NET WORTH</div><div class="value" id="statNet">$10,000.00</div></div>
+    <div class="who">
+      <div><b id="whoUsername"></b><span class="admin-pill hidden" id="adminPill">ADMIN</span></div>
+      <div class="hidden" id="notAdminUidHint" style="font-size:11px; color:var(--text-dim); max-width:220px;"></div>
+      <button class="logout-btn" id="logoutBtn">Sign out</button>
+    </div>
+  </div>
+</header>
+
+<nav class="subnav">
+  <button id="navFloor" class="active">Trading Floor</button>
+  <button id="navWagers">Wagers</button>
+  <button id="navAssets">Assets</button>
+  <button id="navHistory">Trade History</button>
+  <button id="navElo">Elo Distribution</button>
+  <button id="navNetworth">Net Worth</button>
+</nav>
+
+<main>
+  <div id="viewTradingFloor">
+  <div class="grid">
+    <div style="display:flex; flex-direction:column; gap:20px;">
+
+      <section class="panel">
+        <div class="panel-head">
+          <h2>Battle Reports</h2>
+          <span class="sub">upload a BATTLEFIELD_OVER.html — the market updates for everyone instantly</span>
+        </div>
+        <div class="panel-body">
+          <div class="dropzone" id="dropzone">
+            <div class="big">Drop one or more battle report .html files here</div>
+            <div>or click to browse — select one or more files; each file is checked before it's accepted</div>
+            <input type="file" id="fileInput" accept=".html,.htm" multiple>
+          </div>
+          <div class="report-log" id="reportLog"></div>
+
+          <section class="panel image-converter">
+            <div class="panel-head">
+              <h2>Image → Battle Report HTML</h2>
+              <span class="sub">OCR converts a battle-report screenshot into the standard report format</span>
+            </div>
+            <div class="panel-body">
+              <div class="image-dropzone" id="imageDropzone">
+                <div class="big">Drop a battle report image here</div>
+                <div>or click to browse — PNG, JPG, JPEG, WEBP and other browser-readable images</div>
+                <input type="file" id="imageInput" accept="image/*">
+              </div>
+              <div class="ocr-progress" id="ocrProgress"><div id="ocrProgressBar"></div></div>
+              <div class="ocr-status" id="ocrStatus"></div>
+              <div class="ocr-actions">
+                <button id="downloadConvertedHtml" disabled>Download converted .html</button>
+                <button id="uploadConvertedHtml" disabled>Upload converted report</button>
+              </div>
+            </div>
+          </section>
+        </div>
+      </section>
+
+      <section class="panel debug-panel hidden" id="debugPanel">
+        <div class="panel-head">
+          <h2>Admin / Debug Console</h2>
+          <span class="sub">visible to admins only — enforced server-side, not just hidden UI</span>
+        </div>
+        <div class="panel-body">
+          <div class="admin-note">This panel is hidden client-side, but the real protection is Firestore Security Rules: even if someone forced it visible, the server rejects synthetic reports, day jumps, and report deletes from non-admin accounts.</div>
+          <div class="debug-grid">
+            <button class="debug-btn" id="dbgTestReport">Generate test report (random stats)</button>
+            <button class="debug-btn" id="dbgAdvanceDay">Advance clock +1 (no new data)</button>
+          </div>
+          <div class="debug-inline" style="margin-top:10px;">
+            <span style="font-size:12px; color:var(--text-dim);">Jump clock to day</span>
+            <input type="number" id="dbgJumpDay" min="0" step="1">
+            <button class="debug-btn" id="dbgJumpBtn">Go</button>
+          </div>
+          <div class="admin-note" style="margin-top:16px;">Price scale — changing these and hitting Recalculate reprices every stock for <b>every connected trader</b> immediately. Stock price is a direct read of each player's current Elo <b>rank</b> that day (see the Elo Distribution tab) — no day-over-day compounding, no separate weight set to tune. The middle-ranked player prices at "Median"; the single top-ranked player's price approaches (but never quite reaches) "Top price" as more players are tracked. Because this is rank-based, not raw-Elo-based, it can't blow up no matter how large the actual Elo gap between players gets. Only visible/editable here, admin-only server-side too.</div>
+          <div class="weight-row"><label>Median price</label><input type="number" step="1" id="pMedian" style="width:100%"><span></span></div>
+          <div class="weight-row"><label>Top price</label><input type="number" step="1" id="pTop" style="width:100%"><span></span></div>
+          <button class="debug-btn" id="dbgRecalc">Recalculate &amp; broadcast to all clients</button>
+          <div class="msg" id="wMsg"></div>
+          <div class="debug-inline" style="margin-top:10px;">
+            <button class="debug-btn" id="dbgFindDupes">Scan existing reports for duplicate stats</button>
+            <button class="debug-btn" id="dbgMigrateReports">Clean up duplicates &amp; lock in IDs</button>
+          </div>
+          <div id="dupeResults" style="margin-top:10px; font-size:12px; color:var(--text-dim); white-space:pre-line;"></div>
+          <div class="admin-note" style="margin-top:16px;">Group misread player names — the report bot sometimes reads the same real player as several different names. Select every name that's really the same person, type the correct display name, and save: past and future reports using any of those names get merged into one player everywhere prices, Elo, and holdings are computed.</div>
+          <div class="field"><label>Names to merge (ctrl/cmd-click to select several)</label><select id="nameGroupSelect" multiple size="8" style="width:100%;"></select></div>
+          <div class="field"><label>Correct display name</label><input type="text" id="nameGroupCanonical" placeholder="e.g. Tristed Commando"></div>
+          <button class="debug-btn" id="dbgSaveNameGroup">Save group</button>
+          <div class="msg" id="nameGroupMsg"></div>
+          <div id="nameGroupsList" style="margin-top:10px; font-size:12px; color:var(--text-dim);">No groups yet.</div>
+        </div>
+      </section>
+
+      <section class="panel">
+        <div class="panel-head"><h2>Ticker</h2><span class="sub" id="tickerSub">no stocks listed yet</span></div>
+        <div class="panel-body" style="padding:0;">
+          <div style="padding:10px 16px; font-size:11px; color:var(--text-dim); border-bottom:1px solid var(--line); line-height:1.5;">Price tracks each player's current Elo standing against the whole field — no day-over-day compounding. The median player prices around the "Median" setting; the strongest currently trend toward the "Top price" setting. Same curve for every trader.</div>
+          <div class="field" style="margin:0; padding:10px 16px; border-bottom:1px solid var(--line);"><input type="text" id="tickerSearch" placeholder="Search symbol or class…" autocomplete="off"></div>
+          <div style="max-height:520px; overflow-y:auto;">
+            <table class="ticker">
+              <thead><tr><th>Symbol</th><th>Class</th><th>Price</th><th>Chg</th><th>Vol</th><th>Trend</th><th></th></tr></thead>
+              <tbody id="tickerBody"><tr><td colspan="7" class="empty-state">Upload a battle report to list the first stocks.</td></tr></tbody>
+            </table>
+          </div>
+        </div>
+      </section>
+    </div>
+
+    <div style="display:flex; flex-direction:column; gap:20px;">
+
+      <section class="panel">
+        <div class="panel-head"><h2>Trade</h2><span class="sub">calls, puts &amp; elimination swaps</span></div>
+        <div class="panel-body">
+          <div class="type-tabs">
+            <button class="active call" data-type="call">Call</button>
+            <button class="put" data-type="put">Put</button>
+            <button class="swap" data-type="swap">Elim. Swap</button>
+          </div>
+          <div class="type-desc" id="typeDesc"></div>
+
+          <div class="field"><label>Underlying stock</label><select id="optSymbol"><option value="">— select a stock —</option></select></div>
+
+          <div id="fieldsCallPut">
+            <div class="field">
+              <label>Strike price</label>
+              <select id="optStrikeSelect"><option value="">— select a stock first —</option></select>
+            </div>
+            <div class="field hidden" id="optStrikeCustomField">
+              <label>Custom strike ($)</label>
+              <input type="number" id="optStrikeCustom" step="0.01" min="0.01">
+            </div>
+            <input type="hidden" id="optStrike">
+          </div>
+          <div id="fieldsSwap" class="hidden">
+            <div class="field"><label>Trigger: Deaths ≥</label><input type="number" id="swapThreshold" min="1" step="1" value="5"></div>
+            <div class="field"><label>Notional payout if triggered ($)</label><input type="number" id="swapNotional" min="1" step="1" value="500"></div>
+          </div>
+
+          <div class="field"><label>Expires in (future reports)</label><input type="number" id="optExpiry" min="1" step="1" value="2"></div>
+          <div class="field"><label>Contracts</label><input type="number" id="optQty" min="1" step="1" value="1"></div>
+
+          <div class="premium-box" id="premiumBox">
+            <div class="line" id="rowCurrent"><span>Current price</span><b id="pbCurrent">—</b></div>
+            <div class="line" id="rowIntrinsic"><span>Intrinsic value</span><b id="pbIntrinsic">—</b></div>
+            <div class="line" id="rowProb" style="display:none;"><span>Est. trigger probability</span><b id="pbProb">—</b></div>
+            <div class="line"><span id="timeValueLabel">Time value (volatility-based)</span><b id="pbTime">—</b></div>
+            <div class="line total"><span>Premium / contract</span><b id="pbPremium">—</b></div>
+            <div class="line"><span>Total cost</span><b id="pbTotal">—</b></div>
+          </div>
+          <button class="primary-btn" id="buyBtn" disabled>Select a stock first</button>
+          <div class="msg" id="buyMsg"></div>
+        </div>
+      </section>
+
+      <section class="panel">
+        <div class="panel-head"><h2>Positions</h2><span class="sub" id="posSub">0 derivatives · 0 shares</span></div>
+        <div class="panel-body" id="positionsBody"><div class="empty-state">No contracts yet.</div></div>
+      </section>
+
+    </div>
+  </div>
+
+  <section class="panel" style="margin-top:20px;">
+    <div class="panel-head"><h2>Price History</h2><span class="sub">select symbols below to plot</span></div>
+    <div class="chart-wrap">
+      <div class="legend-pills" id="legendPills"></div>
+      <canvas id="priceChart" height="110"></canvas>
+    </div>
+  </section>
+  </div>
+
+  <div id="viewWagers" class="hidden">
+    <div class="grid">
+      <div style="display:flex; flex-direction:column; gap:20px;">
+        <section class="panel">
+          <div class="panel-head"><h2>Open Wagers</h2><span class="sub" id="betsSub">0 open</span></div>
+          <div class="panel-body">
+            <div class="bet-filter-pills" id="betFilters">
+              <button data-filter="open" class="active">Open</button>
+              <button data-filter="resolved">Resolved / Cancelled</button>
+            </div>
+            <div id="betsBody"><div class="empty-state">No wagers posted yet — create the first one.</div></div>
+          </div>
+        </section>
+      </div>
+
+      <div style="display:flex; flex-direction:column; gap:20px;">
+        <section class="panel">
+          <div class="panel-head"><h2>Post a Wager</h2><span class="sub">anyone can post one</span></div>
+          <div class="panel-body">
+            <div class="type-desc">Pari-mutuel odds: everyone who bets on the winning outcome splits the whole pool, in proportion to their stake. Nothing is paid out automatically — an admin marks the winner once it's known, then pays out winners as a separate step.</div>
+            <div class="field"><label>What's being wagered on</label><input type="text" id="betTitle" placeholder="e.g. Will TESTPLAYER1 top the Elo board this week?" maxlength="140"></div>
+            <label style="display:block; font-size:11px; color:var(--text-dim); margin-bottom:4px;">Outcomes (2+)</label>
+            <div id="betOutcomeInputs">
+              <div class="outcome-input-row"><input type="text" data-outcome-input maxlength="60" placeholder="Outcome A"><button class="remove-outcome-btn" tabindex="-1">×</button></div>
+              <div class="outcome-input-row"><input type="text" data-outcome-input maxlength="60" placeholder="Outcome B"><button class="remove-outcome-btn" tabindex="-1">×</button></div>
+            </div>
+            <button class="add-outcome-btn" id="addOutcomeBtn">+ Add another outcome</button>
+            <div class="field"><label>Closes in (days, optional)</label><input type="number" min="1" step="1" id="betClosesDays" placeholder="Leave blank for no deadline"></div>
+            <button class="primary-btn" id="createBetBtn">Post wager</button>
+            <div class="msg" id="createBetMsg"></div>
+          </div>
+        </section>
+
+        <section class="panel">
+          <div class="panel-head"><h2>My Wagers</h2><span class="sub" id="myWagersSub">0 placed</span></div>
+          <div class="panel-body" id="myWagersBody"><div class="empty-state">You haven't placed a wager yet.</div></div>
+        </section>
+      </div>
+    </div>
+  </div>
+
+  <div id="viewAssets" class="hidden">
+    <section class="panel">
+      <div class="panel-head"><h2>Assets</h2><span class="sub">buy and sell player stock</span></div>
+      <div class="panel-body">
+        <div class="grid" style="grid-template-columns:1fr 1.4fr; gap:20px;">
+          <div>
+            <div class="type-desc" style="margin-bottom:12px;">Player stock is a cash equity position. Buy at the current market price, hold it through future reports, and sell whenever you choose. Your unrealized value uses the latest player price.</div>
+            <div class="field"><label>Player stock</label><select id="assetSymbol"><option value="">— select a stock —</option></select></div>
+            <div class="field"><label>Shares</label><input type="number" id="assetQty" min="1" step="1" value="1"></div>
+            <div class="premium-box" id="assetPreview">
+              <div class="line"><span>Current price</span><b id="assetCurrent">—</b></div>
+              <div class="line"><span>Shares</span><b id="assetShares">—</b></div>
+              <div class="line total"><span>Total cost</span><b id="assetTotal">—</b></div>
+            </div>
+            <button class="primary-btn" id="assetBuyBtn" disabled>Select a stock first</button>
+            <div class="msg" id="assetMsg"></div>
+          </div>
+          <div>
+            <div class="panel-head" style="margin:-14px -16px 14px;"><h2>Your Holdings</h2><span class="sub" id="assetSub">0 shares</span></div>
+            <div id="assetsBody"><div class="empty-state">No stock holdings yet.</div></div>
+          </div>
+        </div>
+      </div>
+    </section>
+  </div>
+
+  <div id="viewHistory" class="hidden">
+    <section class="panel">
+      <div class="panel-head"><h2>Trade History</h2><span class="sub">every derivative trade you've settled or closed</span></div>
+      <div class="panel-body">
+        <div class="history-stats" id="historyStats"></div>
+        <div class="filter-pills" id="historyFilters">
+          <button data-filter="all" class="active">All</button>
+          <button data-filter="won">Won</button>
+          <button data-filter="lost">Lost</button>
+        </div>
+        <div style="overflow-x:auto;">
+          <table class="history">
+            <thead><tr><th>Type</th><th>Symbol</th><th>Strike/Trigger</th><th>Bought</th><th>Expiry</th><th>Settled</th><th>Contracts</th><th>Premium</th><th>Payoff</th><th>Net P&amp;L</th><th>Result</th></tr></thead>
+            <tbody id="historyBody"></tbody>
+          </table>
+        </div>
+      </div>
+    </section>
+  </div>
+
+  <div id="viewElo" class="hidden">
+    <section class="panel">
+      <div class="panel-head"><h2>Elo Distribution</h2><span class="sub">faction win/loss, scaled by role-relative performance across every battle report — click a player to see their other classes under that name</span></div>
+      <div class="panel-body">
+        <div class="elo-summary" id="eloSummary"></div>
+        <div class="chart-wrap" style="padding:0 0 18px;">
+          <canvas id="eloChart" height="130"></canvas>
+        </div>
+        <div style="overflow-x:auto;">
+          <table class="history">
+            <thead><tr><th>Rank</th><th>Player</th><th>Class</th><th>Elo</th><th>W-L-D</th><th>Battles</th></tr></thead>
+            <tbody id="eloBody"></tbody>
+          </table>
+        </div>
+      </div>
+    </section>
+  </div>
+
+  <div id="viewNetworth" class="hidden">
+    <section class="panel">
+      <div class="panel-head"><h2>Net Worth</h2><span class="sub">every trader who has signed up, ranked by true net worth</span></div>
+      <div class="panel-body">
+        <div class="admin-note">Open Value here is every trader's open stock/option/swap positions priced at the current market price — the same math your own header stat uses. Firestore's rules were updated so any signed-in trader can read (not write) any other trader's positions, which is what makes this possible; trade activity is now visible market-wide, not just to each account's owner.</div>
+        <div class="elo-summary" id="networthSummary"></div>
+        <div style="overflow-x:auto;">
+          <table class="history">
+            <thead><tr><th>Rank</th><th>Trader</th><th>Cash</th><th>Open Value</th><th>Net Worth</th><th>Realized P&amp;L</th></tr></thead>
+            <tbody id="networthBody"></tbody>
+          </table>
+        </div>
+      </div>
+    </section>
+  </div>
+</main>
+
+</div>
+
+<script type="module">import { initializeApp } from "https://www.gstatic.com/firebasejs/10.13.1/firebase-app.js";
+import { getAuth, onAuthStateChanged, createUserWithEmailAndPassword, signInWithEmailAndPassword, signOut } from "https://www.gstatic.com/firebasejs/10.13.1/firebase-auth.js";
+import { getFirestore, doc, getDoc, getDocs, setDoc, updateDoc, deleteDoc, collection, addDoc, onSnapshot, query, orderBy, where, getCountFromServer, runTransaction, serverTimestamp, writeBatch, Timestamp } from "https://www.gstatic.com/firebasejs/10.13.1/firebase-firestore.js";
+const firebaseConfig = {
+    apiKey: "AIzaSyDRV4DULaCqCnO-vYeL2rN85swU61VPCyI",
+    authDomain: "battlefieldexchange-4c29f.firebaseapp.com",
+    projectId: "battlefieldexchange-4c29f",
+    storageBucket: "battlefieldexchange-4c29f.firebasestorage.app",
+    messagingSenderId: "794134853105",
+    appId: "1:794134853105:web:d216f8f277ad5dacd54050"
+};
+const app = initializeApp(firebaseConfig);
+const auth = getAuth(app);
+const db = getFirestore(app);
+const state = {
+    uid: null, username: null, isAdmin: false,
+    reports: [], day: 0, players: {}, elo: {},
+    cash: 10000, realized: 0, positions: [],
+    selectedSymbols: new Set(), tradeType: 'call', historyFilter: 'all', assetSymbol: '', tickerSearch: '',
+    bets: [], historicalBets: [], myWagers: [], betFilter: 'open'
+};
+const ELO_START = 1500, ELO_K = 32;
+const MEDIC_WEIGHTS = { damage: 0.15, healing: 0.45, kills: 0.00, assists: 0.20, deaths: 0.40 };
+const DPS_WEIGHTS = { damage: 0.35, healing: 0.00, kills: 0.05, assists: 0.25, deaths: 0.35 };
+function eloWeightsFor(profession) {
+    return normProf(profession) === 'medic' ? MEDIC_WEIGHTS : DPS_WEIGHTS;
+}
+function teamCombatScore(rows) {
+    let deaths = 0;
+    rows.forEach(r => { deaths += r.deaths || 0; });
+    return -deaths;
+}
+const FACTION_ALIASES = {
+    imperial: 'Imperial', blue: 'Imperial',
+    rebel: 'Rebel', red: 'Rebel',
+};
+function normalizeFactionSide(faction) {
+    const key = String(faction || '').trim().toLowerCase();
+    return FACTION_ALIASES[key] || (String(faction || 'Unknown').trim() || 'Unknown');
+}
+function factionGroups(rows) {
+    const byFaction = {};
+    rows.forEach(r => {
+        const key = normalizeFactionSide(r.faction);
+        (byFaction[key] = byFaction[key] || []).push(r);
+    });
+    return byFaction;
+}
+const TEAM_ELO_K = 32;
+const PERFORMANCE_INFLUENCE = 0.4;
+function performanceMultiplier(compositeZ) {
+    const clamped = Math.max(-Z_CLAMP, Math.min(Z_CLAMP, compositeZ));
+    return 1 + PERFORMANCE_INFLUENCE * (clamped / Z_CLAMP);
+}
+const MOV_INFLUENCE = 0.5;
+function teamCombatVolume(rows) {
+    let deaths = 0;
+    rows.forEach(r => { deaths += r.deaths || 0; });
+    return deaths;
+}
+function marginMultiplier(scoreA, scoreB, rowsA, rowsB) {
+    const totalDeaths = teamCombatVolume(rowsA) + teamCombatVolume(rowsB);
+    if (totalDeaths <= 0)
+        return 1;
+    const marginRatio = Math.min(1, Math.abs(scoreA - scoreB) / totalDeaths);
+    return 1 + MOV_INFLUENCE * marginRatio;
+}
+const DEFAULT_PRICE_SCALE = { median: 100, top: 10000 };
+let PRICE_SCALE_SETTINGS = { ...DEFAULT_PRICE_SCALE };
+let NAME_ALIASES = {};
+function canonicalName(name) {
+    return NAME_ALIASES[name] || name;
+}
+function priceFromPercentile(percentile) {
+    const ratio = PRICE_SCALE_SETTINGS.top / PRICE_SCALE_SETTINGS.median;
+    const price = PRICE_SCALE_SETTINGS.median * Math.pow(ratio, 2 * (percentile - 0.5));
+    return Math.round(price * 100) / 100;
+}
+function pricesFromEloSnapshot(ratings, allNames) {
+    const sorted = [...allNames].sort((a, b) => ratings[b].elo - ratings[a].elo);
+    const N = sorted.length;
+    const prices = {};
+    sorted.forEach((name, i) => {
+        const rank = i + 1;
+        const percentile = 1 - rank / (N + 1);
+        prices[name] = priceFromPercentile(percentile);
+    });
+    return prices;
+}
+const MIN_ROLE_SAMPLE = 2;
+const Z_CLAMP = 2.5;
+let unsubReports = null, unsubPositions = null, unsubUserDoc = null, unsubWeights = null, unsubDayCounter = null;
+let unsubBets = null, unsubMyWagers = null, unsubNameAliases = null;
+let reportsRecheckTimer = null;
+let pendingUsername = null;
+function usernameToAuthEmail(username) {
+    return username.trim().toLowerCase().replace(/[^a-z0-9_]/g, '') + '@players.battlefield-exchange.local';
+}
+function isValidUsername(username) {
+    return /^[A-Za-z0-9_]{3,20}$/.test(username.trim());
+}
+const authScreen = document.getElementById('authScreen');
+const loadingScreen = document.getElementById('loadingScreen');
+const appRoot = document.getElementById('appRoot');
+let authMode = 'signin';
+document.getElementById('tabSignIn').addEventListener('click', () => setAuthMode('signin'));
+document.getElementById('tabSignUp').addEventListener('click', () => setAuthMode('signup'));
+function setAuthMode(mode) {
+    authMode = mode;
+    document.getElementById('tabSignIn').classList.toggle('active', mode === 'signin');
+    document.getElementById('tabSignUp').classList.toggle('active', mode === 'signup');
+    document.getElementById('authSubmit').textContent = mode === 'signin' ? 'Sign In' : 'Create Account';
+    document.getElementById('authMsg').textContent = '';
+}
+document.getElementById('authSubmit').addEventListener('click', async () => {
+    const username = document.getElementById('authUsername').value.trim();
+    const password = document.getElementById('authPassword').value;
+    const msg = document.getElementById('authMsg');
+    msg.className = 'auth-msg';
+    msg.textContent = '';
+    if (!username || !password) {
+        msg.className = 'auth-msg err';
+        msg.textContent = 'Enter a username and password.';
+        return;
+    }
+    if (!isValidUsername(username)) {
+        msg.className = 'auth-msg err';
+        msg.textContent = 'Username must be 3-20 characters: letters, numbers, underscore only.';
+        return;
+    }
+    const authEmail = usernameToAuthEmail(username);
+    try {
+        if (authMode === 'signin')
+            await signInWithEmailAndPassword(auth, authEmail, password);
+        else {
+            pendingUsername = username;
+            await createUserWithEmailAndPassword(auth, authEmail, password);
+        }
+    }
+    catch (err) {
+        pendingUsername = null;
+        msg.className = 'auth-msg err';
+        msg.textContent = friendlyAuthError(err);
+    }
+});
+function friendlyAuthError(err) {
+    const code = err.code || '';
+    if (code.includes('auth/email-already-in-use'))
+        return 'That username is already taken — try signing in instead.';
+    if (code.includes('auth/invalid-credential') || code.includes('auth/wrong-password'))
+        return 'Wrong username or password.';
+    if (code.includes('auth/weak-password'))
+        return 'Password should be at least 6 characters.';
+    if (code.includes('auth/invalid-email'))
+        return 'That username has characters Firebase can\'t accept — stick to letters, numbers, and underscores.';
+    if (code.includes('auth/unauthorized-domain'))
+        return "This domain isn't authorized in Firebase yet — add it under Authentication -> Settings -> Authorized domains.";
+    return err.message || 'Something went wrong.';
+}
+document.getElementById('logoutBtn').addEventListener('click', () => signOut(auth));
+onAuthStateChanged(auth, async (user) => {
+    teardownSubscriptions();
+    if (!user) {
+        appRoot.classList.add('hidden');
+        loadingScreen.classList.add('hidden');
+        authScreen.classList.remove('hidden');
+        return;
+    }
+    authScreen.classList.add('hidden');
+    loadingScreen.classList.remove('hidden');
+    state.uid = user.uid;
+    const userRef = doc(db, 'users', user.uid);
+    const snap = await getDoc(userRef);
+    if (!snap.exists()) {
+        const username = pendingUsername || user.email.split('@')[0];
+        await setDoc(userRef, { username, cash: 10000, realized: 0, createdAt: serverTimestamp() });
+        state.username = username;
+    }
+    else {
+        state.username = snap.data().username || user.email.split('@')[0];
+    }
+    pendingUsername = null;
+    document.getElementById('whoUsername').textContent = state.username;
+    try {
+        const adminSnap = await getDoc(doc(db, 'admins', user.uid));
+        state.isAdmin = adminSnap.exists();
+    }
+    catch (e) {
+        state.isAdmin = false;
+    }
+    document.getElementById('debugPanel').classList.toggle('hidden', !state.isAdmin);
+    document.getElementById('adminPill').classList.toggle('hidden', !state.isAdmin);
+    const hint = document.getElementById('notAdminUidHint');
+    hint.textContent = state.isAdmin ? 'Logged in as admin.' : 'Logged in as user.';
+    hint.classList.remove('hidden');
+    subscribeToMarket();
+    subscribeToUserDoc(userRef);
+    subscribeToPositions(user.uid);
+    subscribeToPriceWeights();
+    subscribeToNameAliases();
+    subscribeToDayCounter();
+    loadingScreen.classList.add('hidden');
+    appRoot.classList.remove('hidden');
+});
+function teardownSubscriptions() {
+    if (unsubReports) {
+        unsubReports();
+        unsubReports = null;
+    }
+    if (unsubUserDoc) {
+        unsubUserDoc();
+        unsubUserDoc = null;
+    }
+    if (unsubPositions) {
+        unsubPositions();
+        unsubPositions = null;
+    }
+    if (unsubWeights) {
+        unsubWeights();
+        unsubWeights = null;
+    }
+    if (unsubNameAliases) {
+        unsubNameAliases();
+        unsubNameAliases = null;
+    }
+    if (unsubDayCounter) {
+        unsubDayCounter();
+        unsubDayCounter = null;
+    }
+    if (unsubBets) {
+        unsubBets();
+        unsubBets = null;
+    }
+    if (unsubMyWagers) {
+        unsubMyWagers();
+        unsubMyWagers = null;
+    }
+    if (reportsRecheckTimer) {
+        clearInterval(reportsRecheckTimer);
+        reportsRecheckTimer = null;
+    }
+}
+function subscribeToDayCounter() {
+    const ref = doc(db, 'counters', 'day');
+    unsubDayCounter = onSnapshot(ref, (snap) => {
+        const counterDay = snap.exists() ? (snap.data().value || 0) : 0;
+        if (counterDay > state.day) {
+            state.day = counterDay;
+            checkAndSettlePositions();
+            renderAll();
+        }
+    });
+}
+const REQUIRED_HEADERS = ['name', 'profession', 'faction', 'kills', 'assists', 'deaths', 'damage', 'largest performed hit', 'damage taken', 'healing', 'largest heal', 'captures'];
+const MAX_PLAUSIBLE_DAMAGE = 7000000;
+const MAX_PLAUSIBLE_HEALING = 5000000;
+function validateAndParseReportHTML(text) {
+    const doc_ = new DOMParser().parseFromString(text, 'text/html');
+    const table = doc_.querySelector('table');
+    if (!table)
+        return { valid: false, error: 'No <table> element found in this file.' };
+    const rows = Array.from(table.querySelectorAll('tr'));
+    if (rows.length < 2)
+        return { valid: false, error: 'Table has no data rows.' };
+    const headerCells = Array.from(rows[0].querySelectorAll('th,td')).map(c => c.textContent.trim().toLowerCase());
+    const missing = REQUIRED_HEADERS.filter(h => !headerCells.includes(h));
+    if (missing.length)
+        return { valid: false, error: 'Not a recognized battle report — missing column(s): ' + missing.join(', ') };
+    const colIndex = {};
+    headerCells.forEach((h, i) => { if (REQUIRED_HEADERS.includes(h))
+        colIndex[h] = i; });
+    const players = [];
+    for (let r = 1; r < rows.length; r++) {
+        const cells = Array.from(rows[r].querySelectorAll('td'));
+        if (cells.length === 0)
+            continue;
+        const get = (h) => cells[colIndex[h]] ? cells[colIndex[h]].textContent.trim() : '';
+        const num = (h) => { const v = parseFloat(get(h)); return isNaN(v) ? 0 : v; };
+        const name = get('name');
+        if (!name)
+            continue;
+        const damage = num('damage');
+        const healing = num('healing');
+        if (damage > MAX_PLAUSIBLE_DAMAGE) {
+            return { valid: false, error: `Implausible damage for ${name}: ${damage.toLocaleString()} exceeds the maximum expected (${MAX_PLAUSIBLE_DAMAGE.toLocaleString()}). Likely an OCR misread — double-check the source image.` };
+        }
+        if (healing > MAX_PLAUSIBLE_HEALING) {
+            return { valid: false, error: `Implausible healing for ${name}: ${healing.toLocaleString()} exceeds the maximum expected (${MAX_PLAUSIBLE_HEALING.toLocaleString()}). Likely an OCR misread — double-check the source image.` };
+        }
+        players.push({
+            name, profession: get('profession') || 'Unknown', faction: get('faction') || 'Unknown',
+            kills: num('kills'), assists: num('assists'), deaths: num('deaths'),
+            damage, largestHit: num('largest performed hit'), damageTaken: num('damage taken'),
+            healing, largestHeal: num('largest heal'), captures: num('captures')
+        });
+    }
+    if (players.length === 0)
+        return { valid: false, error: 'Header row matched, but no player rows could be parsed.' };
+    return { valid: true, players };
+}
+async function hashReportStats(players) {
+    const sorted = [...players].sort((a, b) => a.name.localeCompare(b.name));
+    const canonical = sorted.map(p => [
+        p.name, p.damage, p.healing, p.assists, p.deaths
+    ].join('|')).join('\n');
+    const bytes = new TextEncoder().encode(canonical);
+    const digest = await crypto.subtle.digest('SHA-256', bytes);
+    return Array.from(new Uint8Array(digest)).map(b => b.toString(16).padStart(2, '0')).join('');
+}
+async function submitReport(players, filename, isSynthetic) {
+    const statsHash = await hashReportStats(players);
+    const counterRef = doc(db, 'counters', 'day');
+    const reportsCol = collection(db, 'reports');
+    const newReportRef = doc(reportsCol, statsHash);
+    const pricesRef = doc(db, 'pricesByReport', statsHash);
+    const pointerRef = doc(db, 'market', 'latestReportId');
+    let assignedDay;
+    await runTransaction(db, async (tx) => {
+        const existingReport = await tx.get(newReportRef);
+        if (existingReport.exists()) {
+            const err = new Error('This exact report (same player stats) has already been uploaded.');
+            err.duplicate = true;
+            throw err;
+        }
+        const counterSnap = await tx.get(counterRef);
+        const current = counterSnap.exists() ? counterSnap.data().value : 0;
+        assignedDay = current + 1;
+        const { players: pricedPlayers } = computeMarketFromReports([
+            ...state.reports,
+            { day: assignedDay, players }
+        ]);
+        const priceMap = {};
+        Object.keys(pricedPlayers).forEach(name => {
+            const hist = pricedPlayers[name].priceHistory;
+            priceMap[name] = hist.length ? hist[hist.length - 1].price : null;
+        });
+        Object.keys(NAME_ALIASES).forEach(alias => {
+            const canon = NAME_ALIASES[alias];
+            if (priceMap[canon] != null)
+                priceMap[alias] = priceMap[canon];
+        });
+        tx.set(counterRef, { value: assignedDay });
+        tx.set(newReportRef, {
+            day: assignedDay, filename, uploadedBy: state.uid, uploadedByUsername: state.username,
+            uploadedAt: serverTimestamp(), isSynthetic: !!isSynthetic, players
+        });
+        tx.set(pricesRef, { reportId: statsHash, day: assignedDay, prices: priceMap });
+        tx.set(pointerRef, { reportId: statsHash, day: assignedDay });
+    });
+    return assignedDay;
+}
+function readFileAsText(file) {
+    return new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = e => resolve(e.target.result);
+        reader.onerror = () => reject(new Error('Could not read file.'));
+        reader.readAsText(file);
+    });
+}
+async function handleUpload(file) {
+    try {
+        const text = await readFileAsText(file);
+        const result = validateAndParseReportHTML(text);
+        if (!result.valid) {
+            const message = 'REJECTED: ' + result.error;
+            addReportLogRow(file.name, message, true);
+            return { ok: false, message };
+        }
+        const day = await submitReport(result.players, file.name, false);
+        const message = 'Accepted — day ' + day + ', ' + result.players.length + ' stocks';
+        addReportLogRow(file.name, message, false);
+        return { ok: true, message };
+    }
+    catch (err) {
+        const message = (err.duplicate ? 'REJECTED: ' : 'ERROR: ') + err.message;
+        addReportLogRow(file.name, message, true);
+        return { ok: false, message };
+    }
+}
+function addReportLogRow(filename, msg, isError) {
+    const log = document.getElementById('reportLog');
+    const row = document.createElement('div');
+    row.className = 'row';
+    row.setAttribute('data-manual', '1');
+    row.innerHTML = '<span>' + escapeHtml(filename) + '</span><span style="color:' + (isError ? 'var(--red)' : '') + '">' + escapeHtml(msg) + '</span>';
+    log.prepend(row);
+}
+const REPORTS_CACHE_KEY = 'bfx_reports_cache_v1_' + firebaseConfig.projectId;
+function loadCachedReports() {
+    try {
+        const raw = localStorage.getItem(REPORTS_CACHE_KEY);
+        return raw ? JSON.parse(raw) : [];
+    }
+    catch (e) {
+        return [];
+    }
+}
+function saveCachedReports(list) {
+    try {
+        localStorage.setItem(REPORTS_CACHE_KEY, JSON.stringify(list));
+    }
+    catch (e) { }
+}
+async function subscribeToPriceWeights() {
+    const ref = doc(db, 'settings', 'priceWeights');
+    unsubWeights = onSnapshot(ref, (snap) => {
+        PRICE_SCALE_SETTINGS = snap.exists() ? { ...DEFAULT_PRICE_SCALE, ...snap.data() } : { ...DEFAULT_PRICE_SCALE };
+        populateWeightInputsIfIdle();
+        recomputeMarket();
+        renderAll();
+    });
+}
+async function recalculatePriceScale() {
+    if (!state.isAdmin)
+        return;
+    const read = (id, fallback) => {
+        const v = parseFloat(document.getElementById(id).value);
+        return isNaN(v) ? fallback : v;
+    };
+    const settings = {
+        median: read('pMedian', PRICE_SCALE_SETTINGS.median),
+        top: read('pTop', PRICE_SCALE_SETTINGS.top),
+    };
+    const msg = document.getElementById('wMsg');
+    try {
+        await setDoc(doc(db, 'settings', 'priceWeights'), { ...settings, updatedAt: serverTimestamp(), updatedBy: state.username });
+        if (msg) {
+            msg.textContent = 'Broadcast — every connected trader just recalculated.';
+            msg.className = 'auth-msg ok';
+        }
+    }
+    catch (err) {
+        if (msg) {
+            msg.textContent = 'Failed: ' + err.message;
+            msg.className = 'auth-msg err';
+        }
+    }
+}
+async function subscribeToNameAliases() {
+    const ref = doc(db, 'settings', 'nameAliases');
+    unsubNameAliases = onSnapshot(ref, (snap) => {
+        NAME_ALIASES = snap.exists() && snap.data().map ? snap.data().map : {};
+        recomputeMarket();
+        renderAll();
+        populateNameGroupSelect();
+        renderNameGroupsList();
+    });
+}
+function populateNameGroupSelect() {
+    const sel = document.getElementById('nameGroupSelect');
+    if (!sel)
+        return;
+    const selected = new Set(Array.from(sel.selectedOptions || []).map(o => o.value));
+    const names = new Set();
+    state.reports.forEach(rep => rep.players.forEach(p => names.add(p.name)));
+    Object.keys(NAME_ALIASES).forEach(alias => names.add(alias));
+    const sorted = Array.from(names).sort((a, b) => a.localeCompare(b));
+    sel.innerHTML = sorted.map(n => '<option value="' + n.replace(/"/g, '&quot;') + '"' + (selected.has(n) ? ' selected' : '') + '>' + n + (NAME_ALIASES[n] ? ' (-> ' + NAME_ALIASES[n] + ')' : '') + '</option>').join('');
+}
+function renderNameGroupsList() {
+    const box = document.getElementById('nameGroupsList');
+    if (!box)
+        return;
+    const groups = {};
+    Object.keys(NAME_ALIASES).forEach(alias => {
+        const canon = NAME_ALIASES[alias];
+        if (!groups[canon])
+            groups[canon] = [];
+        groups[canon].push(alias);
+    });
+    const canons = Object.keys(groups);
+    if (!canons.length) {
+        box.innerHTML = 'No groups yet.';
+        return;
+    }
+    box.innerHTML = canons.map(canon => '<div style="display:flex; align-items:center; justify-content:space-between; gap:8px; padding:4px 0;">' +
+        '<span>' + groups[canon].join(', ') + ' &rarr; <b>' + canon + '</b></span>' +
+        '<button class="debug-btn" data-remove-group="' + canon.replace(/"/g, '&quot;') + '" style="padding:2px 8px;">Remove</button>' +
+        '</div>').join('');
+}
+async function saveNameGroup() {
+    if (!state.isAdmin)
+        return;
+    const sel = document.getElementById('nameGroupSelect');
+    const canonicalInput = document.getElementById('nameGroupCanonical');
+    const msg = document.getElementById('nameGroupMsg');
+    const chosen = Array.from(sel.selectedOptions || []).map(o => o.value);
+    const canonical = canonicalInput.value.trim();
+    if (chosen.length < 1 || !canonical) {
+        if (msg) {
+            msg.textContent = 'Pick at least one name and enter the correct display name.';
+            msg.className = 'msg err';
+        }
+        return;
+    }
+    const newMap = { ...NAME_ALIASES };
+    chosen.forEach(alias => { if (alias !== canonical)
+        newMap[alias] = canonical; });
+    try {
+        await setDoc(doc(db, 'settings', 'nameAliases'), { map: newMap, updatedAt: serverTimestamp(), updatedBy: state.username });
+        canonicalInput.value = '';
+        if (msg) {
+            msg.textContent = 'Saved — merged into ' + canonical + '.';
+            msg.className = 'msg ok';
+        }
+    }
+    catch (err) {
+        if (msg) {
+            msg.textContent = 'Failed: ' + err.message;
+            msg.className = 'msg err';
+        }
+    }
+}
+async function removeNameGroup(canonical) {
+    if (!state.isAdmin)
+        return;
+    const newMap = { ...NAME_ALIASES };
+    Object.keys(newMap).forEach(alias => { if (newMap[alias] === canonical)
+        delete newMap[alias]; });
+    try {
+        await setDoc(doc(db, 'settings', 'nameAliases'), { map: newMap, updatedAt: serverTimestamp(), updatedBy: state.username });
+    }
+    catch (err) { }
+}
+function populateWeightInputsIfIdle() {
+    const map = { pMedian: 'median', pTop: 'top' };
+    Object.keys(map).forEach(id => {
+        const el = document.getElementById(id);
+        if (el && document.activeElement !== el)
+            el.value = PRICE_SCALE_SETTINGS[map[id]];
+    });
+}
+let priceSnapshotBackfillAttempted = false;
+async function ensurePriceSnapshotExists() {
+    if (priceSnapshotBackfillAttempted)
+        return;
+    priceSnapshotBackfillAttempted = true;
+    try {
+        const pointerRef = doc(db, 'market', 'latestReportId');
+        const pointerSnap = await getDoc(pointerRef);
+        if (pointerSnap.exists())
+            return;
+        if (!state.reports.length)
+            return;
+        const { players } = computeMarketFromReports(state.reports);
+        const priceMap = {};
+        Object.keys(players).forEach(name => {
+            const hist = players[name].priceHistory;
+            priceMap[name] = hist.length ? hist[hist.length - 1].price : null;
+        });
+        Object.keys(NAME_ALIASES).forEach(alias => {
+            const canon = NAME_ALIASES[alias];
+            if (priceMap[canon] != null)
+                priceMap[alias] = priceMap[canon];
+        });
+        const latest = [...state.reports].sort((a, b) => b.day - a.day)[0];
+        await setDoc(doc(db, 'pricesByReport', latest.id), { reportId: latest.id, day: latest.day, prices: priceMap });
+        await setDoc(pointerRef, { reportId: latest.id, day: latest.day });
+        console.log('[bfx] Backfilled initial price snapshot for day', latest.day);
+    }
+    catch (e) {
+    }
+}
+async function subscribeToMarket() {
+    if (reportsRecheckTimer) {
+        clearInterval(reportsRecheckTimer);
+        reportsRecheckTimer = null;
+    }
+    const byId = new Map(loadCachedReports().map(r => [r.id, r]));
+    const paint = () => {
+        const list = Array.from(byId.values()).sort((a, b) => a.day - b.day);
+        state.reports = list;
+        state.day = list.reduce((max, r) => Math.max(max, r.day), 0);
+        recomputeMarket();
+        renderAll();
+        ensurePriceSnapshotExists();
+    };
+    if (byId.size)
+        paint();
+    async function verifyAgainstServer() {
+        if (byId.size === 0)
+            return false;
+        try {
+            const countSnap = await getCountFromServer(collection(db, 'reports'));
+            if (countSnap.data().count !== byId.size) {
+                byId.clear();
+                saveCachedReports([]);
+                return true;
+            }
+        }
+        catch (e) { }
+        return false;
+    }
+    if (await verifyAgainstServer()) {
+        subscribeToMarket();
+        return;
+    }
+    const lastCachedDay = Array.from(byId.values()).reduce((max, r) => Math.max(max, r.day), 0);
+    const q = query(collection(db, 'reports'), where('day', '>', lastCachedDay), orderBy('day'));
+    unsubReports = onSnapshot(q, (snap) => {
+        snap.docChanges().forEach(change => {
+            const rep = { id: change.doc.id, ...change.doc.data() };
+            if (change.type === 'removed')
+                byId.delete(rep.id);
+            else
+                byId.set(rep.id, rep);
+        });
+        saveCachedReports(Array.from(byId.values()));
+        paint();
+        checkAndSettlePositions();
+    });
+    reportsRecheckTimer = setInterval(async () => {
+        if (await verifyAgainstServer()) {
+            if (unsubReports) {
+                unsubReports();
+                unsubReports = null;
+            }
+            subscribeToMarket();
+        }
+    }, 120000);
+}
+function subscribeToUserDoc(userRef) {
+    unsubUserDoc = onSnapshot(userRef, (snap) => {
+        if (!snap.exists())
+            return;
+        const d = snap.data();
+        state.cash = d.cash;
+        state.realized = d.realized;
+        renderStats();
+    });
+}
+function subscribeToPositions(uid) {
+    const q = collection(db, 'users', uid, 'positions');
+    unsubPositions = onSnapshot(q, (snap) => {
+        state.positions = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+        renderPositions();
+        renderAssets();
+        renderHistory();
+        renderStats();
+    });
+}
+function subscribeToBets() {
+    const q = query(collection(db, 'bets'), where('status', 'in', ['open', 'closed']));
+    unsubBets = onSnapshot(q, (snap) => {
+        state.bets = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+        renderBets();
+        renderMyWagers();
+    });
+}
+const oldBetsCache = {};
+async function resolveBetInfo(betId) {
+    const live = state.bets.find(b => b.id === betId);
+    if (live)
+        return live;
+    if (oldBetsCache[betId])
+        return oldBetsCache[betId];
+    try {
+        const snap = await getDoc(doc(db, 'bets', betId));
+        if (snap.exists()) {
+            oldBetsCache[betId] = { id: snap.id, ...snap.data() };
+            return oldBetsCache[betId];
+        }
+    }
+    catch (e) { }
+    return null;
+}
+function subscribeToMyWagers(uid) {
+    const q = query(collection(db, 'wagers'), where('uid', '==', uid));
+    unsubMyWagers = onSnapshot(q, (snap) => {
+        state.myWagers = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+        renderMyWagers();
+    });
+}
+function outcomeLabel(bet, outcomeId) {
+    return (bet && bet.outcomes && bet.outcomes[outcomeId]) || outcomeId || '—';
+}
+async function createBet() {
+    const msgEl = document.getElementById('createBetMsg');
+    msgEl.className = 'msg';
+    msgEl.textContent = '';
+    const title = document.getElementById('betTitle').value.trim();
+    const rows = Array.from(document.querySelectorAll('#betOutcomeInputs [data-outcome-input]'));
+    const labels = rows.map(el => el.value.trim()).filter(Boolean);
+    const uniqueLabels = new Set(labels.map(l => l.toLowerCase()));
+    if (!title) {
+        msgEl.className = 'msg err';
+        msgEl.textContent = 'Give the wager a title.';
+        return;
+    }
+    if (labels.length < 2) {
+        msgEl.className = 'msg err';
+        msgEl.textContent = 'Enter at least 2 outcomes.';
+        return;
+    }
+    if (uniqueLabels.size !== labels.length) {
+        msgEl.className = 'msg err';
+        msgEl.textContent = 'Outcomes must be unique.';
+        return;
+    }
+    const daysInput = document.getElementById('betClosesDays').value;
+    const days = parseFloat(daysInput);
+    let closesAt = null;
+    if (daysInput !== '' && (!Number.isFinite(days) || days <= 0)) {
+        msgEl.className = 'msg err';
+        msgEl.textContent = 'Closing deadline must be a positive number of days, or left blank.';
+        return;
+    }
+    if (daysInput !== '') {
+        closesAt = Timestamp.fromMillis(Date.now() + days * 86400000);
+    }
+    const outcomes = {};
+    labels.forEach((label, i) => { outcomes['o' + (i + 1)] = label; });
+    try {
+        await addDoc(collection(db, 'bets'), {
+            creatorUid: state.uid, creatorUsername: state.username,
+            title, outcomes, pool: {}, totalPool: 0, status: 'open', closesAt,
+            createdAt: serverTimestamp()
+        });
+        document.getElementById('betTitle').value = '';
+        document.getElementById('betClosesDays').value = '';
+        document.getElementById('betOutcomeInputs').innerHTML =
+            '<div class="outcome-input-row"><input type="text" data-outcome-input maxlength="60" placeholder="Outcome A"><button class="remove-outcome-btn" tabindex="-1">×</button></div>'
+                + '<div class="outcome-input-row"><input type="text" data-outcome-input maxlength="60" placeholder="Outcome B"><button class="remove-outcome-btn" tabindex="-1">×</button></div>';
+        msgEl.className = 'msg ok';
+        msgEl.textContent = 'Wager posted.';
+    }
+    catch (err) {
+        msgEl.className = 'msg err';
+        msgEl.textContent = 'Could not post wager: ' + err.message;
+    }
+}
+async function placeWager(betId, outcomeId, amount, msgEl) {
+    amount = Math.round(Number(amount) * 100) / 100;
+    if (!amount || amount <= 0) {
+        msgEl.className = 'msg err';
+        msgEl.textContent = 'Enter a wager amount greater than zero.';
+        return;
+    }
+    const betRef = doc(db, 'bets', betId);
+    const userRef = doc(db, 'users', state.uid);
+    const wagerRef = doc(collection(db, 'wagers'));
+    try {
+        await runTransaction(db, async (tx) => {
+            const betSnap = await tx.get(betRef);
+            if (!betSnap.exists())
+                throw new Error('This wager no longer exists.');
+            const bet = betSnap.data();
+            if (bet.status !== 'open')
+                throw new Error('This wager is no longer open.');
+            if (bet.closesAt && bet.closesAt.toMillis() < Date.now())
+                throw new Error('This wager has closed.');
+            if (!bet.outcomes || !(outcomeId in bet.outcomes))
+                throw new Error('That outcome no longer exists.');
+            const userSnap = await tx.get(userRef);
+            const cash = userSnap.exists() ? Number(userSnap.data().cash || 0) : 0;
+            if (amount > cash)
+                throw new Error('Not enough cash. Need ' + fmtMoney(amount) + ', have ' + fmtMoney(cash) + '.');
+            const pool = { ...(bet.pool || {}) };
+            pool[outcomeId] = Number(pool[outcomeId] || 0) + amount;
+            const totalPool = Number(bet.totalPool || 0) + amount;
+            tx.set(wagerRef, { uid: state.uid, betId, outcomeId, amount, placedAt: serverTimestamp(), paid: false });
+            tx.update(betRef, { pool, totalPool, lastWagerId: wagerRef.id });
+            tx.update(userRef, { cash: cash - amount, lastWagerId: wagerRef.id });
+        });
+        msgEl.className = 'msg ok';
+        msgEl.textContent = 'Wagered ' + fmtMoney(amount) + ' on ' + outcomeLabel(state.bets.find(b => b.id === betId), outcomeId) + '.';
+    }
+    catch (err) {
+        msgEl.className = 'msg err';
+        msgEl.textContent = 'Wager failed: ' + err.message;
+    }
+}
+async function adminCloseBet(betId, msgEl) {
+    if (!confirm('Stop taking new wagers on this bet? You can still resolve it (pay winners) or void it (refund everyone) afterward.'))
+        return;
+    try {
+        await updateDoc(doc(db, 'bets', betId), { status: 'closed' });
+    }
+    catch (err) {
+        if (msgEl) {
+            msgEl.className = 'msg err';
+            msgEl.textContent = 'Could not close: ' + err.message;
+        }
+        else
+            alert('Could not close: ' + err.message);
+    }
+}
+async function adminVoidBet(betId, msgEl) {
+    if (!confirm("Void this bet? No winner will be declared — use \"Refund wagers\" afterward to return everyone's stake."))
+        return;
+    try {
+        await updateDoc(doc(db, 'bets', betId), { status: 'cancelled' });
+    }
+    catch (err) {
+        if (msgEl) {
+            msgEl.className = 'msg err';
+            msgEl.textContent = 'Could not void: ' + err.message;
+        }
+        else
+            alert('Could not void: ' + err.message);
+    }
+}
+async function resolveBet(betId, winningOutcomeId, msgEl) {
+    const bet = state.bets.find(b => b.id === betId);
+    if (!winningOutcomeId) {
+        msgEl.className = 'msg err';
+        msgEl.textContent = 'Pick the winning outcome.';
+        return;
+    }
+    const label = bet ? outcomeLabel(bet, winningOutcomeId) : winningOutcomeId;
+    if (!confirm('Mark "' + label + '" as the winner of "' + (bet ? bet.title : '') + '"? This does not pay anyone out yet — use "Pay out winners" afterward.'))
+        return;
+    try {
+        await updateDoc(doc(db, 'bets', betId), { status: 'resolved', winningOutcomeId });
+        msgEl.className = 'msg ok';
+        msgEl.textContent = 'Marked as resolved. Use "Pay out winners" to distribute the pool.';
+    }
+    catch (err) {
+        msgEl.className = 'msg err';
+        msgEl.textContent = 'Could not resolve: ' + err.message;
+    }
+}
+async function payoutBet(betId, msgEl) {
+    const betRef = doc(db, 'bets', betId);
+    const betSnap = await getDoc(betRef);
+    if (!betSnap.exists()) {
+        msgEl.className = 'msg err';
+        msgEl.textContent = 'Wager not found.';
+        return;
+    }
+    const bet = betSnap.data();
+    if (bet.status !== 'resolved' || !bet.winningOutcomeId) {
+        msgEl.className = 'msg err';
+        msgEl.textContent = 'Resolve the wager (pick a winner) before paying out.';
+        return;
+    }
+    const winningPool = Number((bet.pool || {})[bet.winningOutcomeId] || 0);
+    const totalPool = Number(bet.totalPool || 0);
+    if (winningPool <= 0) {
+        msgEl.className = 'msg ok';
+        msgEl.textContent = 'No one wagered on the winning outcome — nothing to pay out.';
+        return;
+    }
+    const wagersSnap = await getDocs(query(collection(db, 'wagers'), where('betId', '==', betId)));
+    const winners = wagersSnap.docs
+        .map(d => ({ id: d.id, ...d.data() }))
+        .filter(w => w.outcomeId === bet.winningOutcomeId && !w.paid);
+    if (winners.length === 0) {
+        msgEl.className = 'msg ok';
+        msgEl.textContent = 'Already fully paid out.';
+        return;
+    }
+    msgEl.className = 'msg';
+    msgEl.textContent = 'Paying ' + winners.length + ' winner' + (winners.length === 1 ? '' : 's') + '...';
+    let paidCount = 0, failCount = 0;
+    for (const w of winners) {
+        const payout = Math.round((w.amount * totalPool / winningPool) * 100) / 100;
+        const wagerRef = doc(db, 'wagers', w.id);
+        const winnerRef = doc(db, 'users', w.uid);
+        try {
+            await runTransaction(db, async (tx) => {
+                const winnerSnap = await tx.get(winnerRef);
+                const cash = winnerSnap.exists() ? Number(winnerSnap.data().cash || 0) : 0;
+                tx.update(wagerRef, { paid: true, payout });
+                tx.update(winnerRef, { cash: cash + payout, lastPayoutId: w.id });
+            });
+            paidCount++;
+        }
+        catch (err) {
+            failCount++;
+            console.error('Payout failed for wager', w.id, err);
+        }
+    }
+    msgEl.className = failCount ? 'msg err' : 'msg ok';
+    msgEl.textContent = 'Paid ' + paidCount + ' winner' + (paidCount === 1 ? '' : 's') + '.' + (failCount ? (' ' + failCount + ' failed — check console, safe to retry.') : '');
+}
+async function refundBet(betId, msgEl) {
+    const betRef = doc(db, 'bets', betId);
+    const betSnap = await getDoc(betRef);
+    if (!betSnap.exists()) {
+        msgEl.className = 'msg err';
+        msgEl.textContent = 'Wager not found.';
+        return;
+    }
+    const bet = betSnap.data();
+    if (bet.status !== 'cancelled') {
+        msgEl.className = 'msg err';
+        msgEl.textContent = 'Void the wager before refunding it.';
+        return;
+    }
+    const wagersSnap = await getDocs(query(collection(db, 'wagers'), where('betId', '==', betId)));
+    const toRefund = wagersSnap.docs
+        .map(d => ({ id: d.id, ...d.data() }))
+        .filter(w => !w.paid);
+    if (toRefund.length === 0) {
+        msgEl.className = 'msg ok';
+        msgEl.textContent = 'Already fully refunded.';
+        return;
+    }
+    msgEl.className = 'msg';
+    msgEl.textContent = 'Refunding ' + toRefund.length + ' wager' + (toRefund.length === 1 ? '' : 's') + '...';
+    let refundedCount = 0, failCount = 0;
+    for (const w of toRefund) {
+        const wagerRef = doc(db, 'wagers', w.id);
+        const bettorRef = doc(db, 'users', w.uid);
+        try {
+            await runTransaction(db, async (tx) => {
+                const bettorSnap = await tx.get(bettorRef);
+                const cash = bettorSnap.exists() ? Number(bettorSnap.data().cash || 0) : 0;
+                tx.update(wagerRef, { paid: true, payout: w.amount });
+                tx.update(bettorRef, { cash: cash + w.amount, lastPayoutId: w.id });
+            });
+            refundedCount++;
+        }
+        catch (err) {
+            failCount++;
+            console.error('Refund failed for wager', w.id, err);
+        }
+    }
+    msgEl.className = failCount ? 'msg err' : 'msg ok';
+    msgEl.textContent = 'Refunded ' + refundedCount + ' wager' + (refundedCount === 1 ? '' : 's') + '.' + (failCount ? (' ' + failCount + ' failed — check console, safe to retry.') : '');
+}
+async function deleteBet(betId, msgEl) {
+    let unpaidCount = 0;
+    try {
+        const wagersSnap = await getDocs(query(collection(db, 'wagers'), where('betId', '==', betId)));
+        unpaidCount = wagersSnap.docs.filter(d => !d.data().paid).length;
+    }
+    catch (e) { }
+    const warning = unpaidCount > 0
+        ? unpaidCount + ' wager' + (unpaidCount === 1 ? ' was' : 's were') + ' never refunded on this bet — deleting now means that fake-cash stays lost permanently. Delete anyway?'
+        : 'Delete this cancelled wager permanently? This cannot be undone.';
+    if (!confirm(warning))
+        return;
+    try {
+        await deleteDoc(doc(db, 'bets', betId));
+        state.historicalBets = state.historicalBets.filter(b => b.id !== betId);
+        renderBets();
+    }
+    catch (err) {
+        if (msgEl) {
+            msgEl.className = 'msg err';
+            msgEl.textContent = 'Could not delete: ' + err.message;
+        }
+        else
+            alert('Could not delete: ' + err.message);
+    }
+}
+function renderBets() {
+    const body = document.getElementById('betsBody');
+    const sub = document.getElementById('betsSub');
+    if (!body || !sub)
+        return;
+    const openBets = state.bets.filter(b => b.status === 'open');
+    sub.textContent = openBets.length + ' open';
+    const visible = (state.betFilter === 'open' ? state.bets : state.historicalBets)
+        .sort((a, b) => (b.createdAt?.seconds || 0) - (a.createdAt?.seconds || 0));
+    if (visible.length === 0) {
+        body.innerHTML = '<div class="empty-state">' + (state.betFilter === 'open' ? 'No open wagers right now — post one.' : (historicalBetsLoaded ? 'No resolved or cancelled wagers yet.' : 'Loading…')) + '</div>';
+        return;
+    }
+    body.innerHTML = visible.map(bet => renderBetCard(bet)).join('');
+    body.querySelectorAll('[data-place-wager]').forEach(btn => {
+        btn.addEventListener('click', () => {
+            const card = btn.closest('.bet-card');
+            const betId = btn.dataset.placeWager;
+            const outcomeId = card.querySelector('[data-outcome-select]').value;
+            const amount = card.querySelector('[data-wager-amount]').value;
+            const msgEl = card.querySelector('[data-wager-msg]');
+            if (!outcomeId) {
+                msgEl.className = 'msg err';
+                msgEl.textContent = 'Choose an outcome.';
+                return;
+            }
+            placeWager(betId, outcomeId, amount, msgEl);
+        });
+    });
+    body.querySelectorAll('[data-close-bet]').forEach(btn => {
+        btn.addEventListener('click', () => adminCloseBet(btn.dataset.closeBet));
+    });
+    body.querySelectorAll('[data-void-bet]').forEach(btn => {
+        btn.addEventListener('click', () => {
+            const card = btn.closest('.bet-card');
+            const msgEl = card.querySelector('[data-resolve-msg]');
+            adminVoidBet(btn.dataset.voidBet, msgEl);
+        });
+    });
+    body.querySelectorAll('[data-wager-amount]').forEach(input => {
+        input.addEventListener('input', () => updateWagerQuote(input.closest('.bet-card')));
+    });
+    body.querySelectorAll('[data-outcome-select]').forEach(sel => {
+        sel.addEventListener('change', () => updateWagerQuote(sel.closest('.bet-card')));
+    });
+    body.querySelectorAll('[data-resolve-bet]').forEach(btn => {
+        btn.addEventListener('click', () => {
+            const card = btn.closest('.bet-card');
+            const winningOutcomeId = card.querySelector('[data-resolve-select]').value;
+            const msgEl = card.querySelector('[data-resolve-msg]');
+            resolveBet(btn.dataset.resolveBet, winningOutcomeId, msgEl);
+        });
+    });
+    body.querySelectorAll('[data-payout-bet]').forEach(btn => {
+        btn.addEventListener('click', () => {
+            const card = btn.closest('.bet-card');
+            const msgEl = card.querySelector('[data-payout-msg]');
+            btn.disabled = true;
+            payoutBet(btn.dataset.payoutBet, msgEl).finally(() => { btn.disabled = false; });
+        });
+    });
+    body.querySelectorAll('[data-refund-bet]').forEach(btn => {
+        btn.addEventListener('click', () => {
+            const card = btn.closest('.bet-card');
+            const msgEl = card.querySelector('[data-refund-msg]');
+            btn.disabled = true;
+            refundBet(btn.dataset.refundBet, msgEl).finally(() => { btn.disabled = false; });
+        });
+    });
+    body.querySelectorAll('[data-delete-bet]').forEach(btn => {
+        btn.addEventListener('click', () => {
+            const card = btn.closest('.bet-card');
+            const msgEl = card.querySelector('[data-refund-msg]');
+            deleteBet(btn.dataset.deleteBet, msgEl);
+        });
+    });
+}
+function updateWagerQuote(card) {
+    const betId = card.dataset.betid;
+    const bet = state.bets.find(b => b.id === betId);
+    const quoteEl = card.querySelector('[data-wager-quote]');
+    if (!bet || !quoteEl)
+        return;
+    const outcomeId = card.querySelector('[data-outcome-select]').value;
+    const amount = parseFloat(card.querySelector('[data-wager-amount]').value);
+    if (!outcomeId || !amount || amount <= 0) {
+        quoteEl.innerHTML = '';
+        return;
+    }
+    const currentOutcomePool = Number((bet.pool || {})[outcomeId] || 0);
+    const projectedPool = currentOutcomePool + amount;
+    const projectedTotal = Number(bet.totalPool || 0) + amount;
+    const payout = (amount / projectedPool) * projectedTotal;
+    quoteEl.innerHTML = 'If <b>' + escapeHtml(outcomeLabel(bet, outcomeId)) + '</b> wins, you\'d get back roughly <b>' + fmtMoney(payout) + '</b> at today\'s pool — shifts as more people wager.';
+}
+function relativeTime(ms) {
+    const diff = ms - Date.now();
+    const abs = Math.abs(diff);
+    const mins = Math.round(abs / 60000);
+    const hours = Math.round(abs / 3600000);
+    const days = Math.round(abs / 86400000);
+    let label;
+    if (mins < 60)
+        label = mins + (mins === 1 ? ' minute' : ' minutes');
+    else if (hours < 24)
+        label = hours + (hours === 1 ? ' hour' : ' hours');
+    else
+        label = days + (days === 1 ? ' day' : ' days');
+    return diff >= 0 ? ('in ' + label) : (label + ' ago');
+}
+function renderBetCard(bet) {
+    const outcomeIds = Object.keys(bet.outcomes || {});
+    const total = Number(bet.totalPool || 0);
+    const closesAtMs = bet.closesAt ? bet.closesAt.toMillis() : null;
+    const isClosedByDeadline = closesAtMs !== null && closesAtMs < Date.now();
+    const isOpen = bet.status === 'open' && !isClosedByDeadline;
+    const statusLabel = bet.status === 'resolved' ? 'resolved'
+        : bet.status === 'cancelled' ? 'cancelled'
+            : (bet.status === 'closed' || isClosedByDeadline) ? 'closed'
+                : 'open';
+    const canAdminAct = state.isAdmin && (bet.status === 'open' || bet.status === 'closed');
+    const outcomesHtml = outcomeIds.map(oid => {
+        const amt = Number((bet.pool || {})[oid] || 0);
+        const pct = total > 0 ? (amt / total * 100) : 0;
+        const isWinner = bet.winningOutcomeId === oid;
+        return '<div class="outcome-row' + (isWinner ? ' winner' : '') + '">'
+            + '<div class="outcome-label-line"><span class="name">' + escapeHtml(outcomeLabel(bet, oid)) + '</span><span class="odds">' + fmtMoney(amt) + ' · ' + pct.toFixed(0) + '%</span></div>'
+            + '<div class="outcome-bar"><div class="fill" style="width:' + pct.toFixed(1) + '%; background:' + classColor(oid) + ';"></div></div>'
+            + '</div>';
+    }).join('');
+    const closesLine = closesAtMs
+        ? '<div class="bet-closes">' + (isClosedByDeadline ? 'Closed ' : 'Closes ') + relativeTime(closesAtMs) + '</div>'
+        : '';
+    const wagerControls = isOpen ? ('<div class="wager-controls">'
+        + '<select data-outcome-select><option value="">— pick an outcome —</option>'
+        + outcomeIds.map(oid => '<option value="' + escapeHtml(oid) + '">' + escapeHtml(outcomeLabel(bet, oid)) + '</option>').join('')
+        + '</select>'
+        + '<input type="number" min="1" step="1" placeholder="Amount" data-wager-amount>'
+        + '<button data-place-wager="' + bet.id + '">Wager</button>'
+        + '</div>'
+        + '<div class="wager-quote" data-wager-quote></div>'
+        + '<div class="msg" data-wager-msg></div>') : (statusLabel === 'closed' ? '<div class="type-desc">Betting closed — waiting on an admin to resolve or void it.</div>' : '');
+    const closeBlock = (bet.status === 'open' && state.isAdmin) ? ('<button class="dismiss-btn" data-close-bet="' + bet.id + '">Close betting</button>') : '';
+    const resolveBlock = canAdminAct ? ('<div class="admin-resolve">'
+        + '<div class="label">Admin — declare winner</div>'
+        + '<select data-resolve-select><option value="">— pick the winning outcome —</option>'
+        + outcomeIds.map(oid => '<option value="' + escapeHtml(oid) + '">' + escapeHtml(outcomeLabel(bet, oid)) + '</option>').join('')
+        + '</select>'
+        + '<button data-resolve-bet="' + bet.id + '">Resolve wager</button>'
+        + '<button class="dismiss-btn" data-void-bet="' + bet.id + '">Void instead (refund everyone)</button>'
+        + '<div class="msg" data-resolve-msg></div>'
+        + '</div>') : '';
+    const payoutBlock = (bet.status === 'resolved' && state.isAdmin) ? ('<div class="admin-resolve">'
+        + '<div class="label">Admin — payout</div>'
+        + '<button data-payout-bet="' + bet.id + '">Pay out winners</button>'
+        + '<div class="msg" data-payout-msg></div>'
+        + '</div>') : '';
+    const refundBlock = (bet.status === 'cancelled' && state.isAdmin) ? ('<div class="admin-resolve">'
+        + '<div class="label">Admin — refund</div>'
+        + '<button data-refund-bet="' + bet.id + '">Refund wagers</button>'
+        + '<button class="dismiss-btn" data-delete-bet="' + bet.id + '">Delete from history</button>'
+        + '<div class="msg" data-refund-msg></div>'
+        + '</div>') : '';
+    return '<div class="bet-card" data-betid="' + bet.id + '">'
+        + '<div class="bet-top"><span class="bet-title">' + escapeHtml(bet.title || 'Untitled wager') + '</span><span class="bet-status-tag ' + statusLabel + '">' + statusLabel + '</span></div>'
+        + '<div class="bet-meta">Posted by <b>' + escapeHtml(bet.creatorUsername || '?') + '</b> · Pool: <b>' + fmtMoney(total) + '</b></div>'
+        + closesLine
+        + outcomesHtml
+        + wagerControls
+        + closeBlock
+        + resolveBlock
+        + payoutBlock
+        + refundBlock
+        + '</div>';
+}
+function renderMyWagers() {
+    const body = document.getElementById('myWagersBody');
+    const sub = document.getElementById('myWagersSub');
+    if (!body || !sub)
+        return;
+    sub.textContent = state.myWagers.length + ' placed';
+    if (state.myWagers.length === 0) {
+        body.innerHTML = '<div class="empty-state">You haven\'t placed a wager yet.</div>';
+        return;
+    }
+    const missing = state.myWagers
+        .map(w => w.betId)
+        .filter(betId => !state.bets.find(b => b.id === betId) && !oldBetsCache[betId]);
+    if (missing.length) {
+        Promise.all([...new Set(missing)].map(resolveBetInfo)).then(() => renderMyWagers());
+    }
+    const sorted = [...state.myWagers].sort((a, b) => (b.placedAt?.seconds || 0) - (a.placedAt?.seconds || 0));
+    body.innerHTML = sorted.map(w => {
+        const bet = state.bets.find(b => b.id === w.betId) || oldBetsCache[w.betId];
+        const title = bet ? bet.title : '(wager no longer loaded)';
+        const label = bet ? outcomeLabel(bet, w.outcomeId) : w.outcomeId;
+        let resultTag = '<span class="tag open">PENDING</span>';
+        if (bet && bet.status === 'cancelled')
+            resultTag = '<span class="tag" style="color:var(--text-dim); border-color:var(--text-dim);">CANCELLED</span>';
+        else if (bet && bet.winningOutcomeId) {
+            resultTag = bet.winningOutcomeId === w.outcomeId ? '<span class="tag win">WON</span>' : '<span class="tag loss">LOST</span>';
+        }
+        const payoutLine = w.paid
+            ? '<div class="detail"><span>' + (bet && bet.status === 'cancelled' ? 'Refunded' : 'Paid out') + '</span><b>' + fmtMoney(w.payout) + '</b></div>'
+            : (bet && bet.status === 'resolved' && bet.winningOutcomeId === w.outcomeId
+                ? '<div class="detail"><span>Payout</span><b>pending admin payout</b></div>'
+                : (bet && bet.status === 'cancelled'
+                    ? '<div class="detail"><span>Refund</span><b>pending admin refund</b></div>' : ''));
+        return '<div class="pos-card">'
+            + '<div class="top"><span class="sym">' + escapeHtml(title) + '</span>' + resultTag + '</div>'
+            + '<div class="detail"><span>Outcome</span><b>' + escapeHtml(label) + '</b></div>'
+            + '<div class="detail"><span>Amount wagered</span><b>' + fmtMoney(w.amount) + '</b></div>'
+            + payoutLine
+            + '</div>';
+    }).join('');
+}
+document.getElementById('addOutcomeBtn').addEventListener('click', () => {
+    const wrap = document.getElementById('betOutcomeInputs');
+    const row = document.createElement('div');
+    row.className = 'outcome-input-row';
+    row.innerHTML = '<input type="text" data-outcome-input maxlength="60" placeholder="Outcome ' + String.fromCharCode(65 + wrap.children.length) + '"><button class="remove-outcome-btn" tabindex="-1">×</button>';
+    wrap.appendChild(row);
+});
+document.getElementById('betOutcomeInputs').addEventListener('click', (e) => {
+    const btn = e.target.closest('.remove-outcome-btn');
+    if (!btn)
+        return;
+    const wrap = document.getElementById('betOutcomeInputs');
+    if (wrap.children.length <= 2)
+        return;
+    btn.closest('.outcome-input-row').remove();
+});
+document.getElementById('createBetBtn').addEventListener('click', createBet);
+let historicalBetsLoaded = false;
+async function loadHistoricalBetsOnce() {
+    if (historicalBetsLoaded)
+        return;
+    historicalBetsLoaded = true;
+    try {
+        const snap = await getDocs(query(collection(db, 'bets'), where('status', 'in', ['resolved', 'cancelled'])));
+        state.historicalBets = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+    }
+    catch (e) {
+        historicalBetsLoaded = false;
+    }
+    renderBets();
+}
+document.getElementById('betFilters').querySelectorAll('button').forEach(btn => btn.addEventListener('click', () => {
+    state.betFilter = btn.dataset.filter;
+    document.getElementById('betFilters').querySelectorAll('button').forEach(b => b.classList.remove('active'));
+    btn.classList.add('active');
+    if (state.betFilter !== 'open')
+        loadHistoricalBetsOnce();
+    renderBets();
+}));
+function statMeanStd(rows, key) {
+    const vals = rows.map(r => (r.stats ? r.stats[key] : r[key]) || 0);
+    const mean = vals.reduce((a, b) => a + b, 0) / vals.length;
+    const variance = vals.reduce((a, b) => a + Math.pow(b - mean, 2), 0) / vals.length;
+    return { mean, std: Math.sqrt(variance) || 1 };
+}
+function zscore(value, mean, std) { return std ? (value - mean) / std : 0; }
+function clampZ(z) { return Math.max(-Z_CLAMP, Math.min(Z_CLAMP, z)); }
+function normProf(p) { return String(p || 'Unknown').trim().toLowerCase() || 'unknown'; }
+function roleStatsLookup(rows, key, profOf) {
+    const fieldWide = statMeanStd(rows, key);
+    const byProf = {};
+    rows.forEach(r => {
+        const prof = normProf(profOf(r));
+        (byProf[prof] = byProf[prof] || []).push(r);
+    });
+    const cache = {};
+    return (rawProf) => {
+        const prof = normProf(rawProf);
+        if (!cache[prof]) {
+            const peers = byProf[prof] || [];
+            cache[prof] = peers.length >= MIN_ROLE_SAMPLE ? statMeanStd(peers, key) : fieldWide;
+        }
+        return cache[prof];
+    };
+}
+function buildStatLookups(rows, profOf) {
+    return {
+        damage: roleStatsLookup(rows, 'damage', profOf),
+        healing: roleStatsLookup(rows, 'healing', profOf),
+        kills: roleStatsLookup(rows, 'kills', profOf),
+        assists: roleStatsLookup(rows, 'assists', profOf),
+        deaths: roleStatsLookup(rows, 'deaths', profOf),
+    };
+}
+function weightedComposite(lookups, prof, s, weights) {
+    const dmg = lookups.damage(prof), heal = lookups.healing(prof), kills = lookups.kills(prof), assists = lookups.assists(prof), deaths = lookups.deaths(prof);
+    return weights.damage * clampZ(zscore(s.damage, dmg.mean, dmg.std)) +
+        weights.healing * clampZ(zscore(s.healing, heal.mean, heal.std)) +
+        weights.kills * clampZ(zscore(s.kills, kills.mean, kills.std)) +
+        weights.assists * clampZ(zscore(s.assists, assists.mean, assists.std)) -
+        weights.deaths * clampZ(zscore(s.deaths, deaths.mean, deaths.std));
+}
+function computeMarketFromReports(reportsList) {
+    const ratings = {};
+    const players = {};
+    const sortedReports = [...reportsList].sort((a, b) => a.day - b.day);
+    sortedReports.forEach(rep => {
+        const rows = rep.players.map(r => Object.assign({}, r, { name: canonicalName(r.name) }));
+        rows.forEach(r => {
+            if (!ratings[r.name])
+                ratings[r.name] = { elo: ELO_START, battles: 0, wins: 0, losses: 0, draws: 0, profession: r.profession };
+            ratings[r.name].profession = r.profession;
+            if (!players[r.name])
+                players[r.name] = { name: r.name, faction: r.faction, profession: r.profession, history: [], priceHistory: [] };
+            players[r.name].faction = r.faction;
+            players[r.name].profession = r.profession;
+            players[r.name].history.push(Object.assign({ day: rep.day }, r));
+        });
+        if (rows.length >= 2) {
+            const lookups = buildStatLookups(rows, r => r.profession);
+            const composite = {};
+            rows.forEach(r => { composite[r.name] = weightedComposite(lookups, r.profession, r, eloWeightsFor(r.profession)); });
+            const factions = factionGroups(rows);
+            const factionNames = Object.keys(factions);
+            const teamDeltas = {};
+            if (factionNames.length === 2) {
+                const [fA, fB] = factionNames;
+                const rowsA = factions[fA], rowsB = factions[fB];
+                const scoreA = teamCombatScore(rowsA), scoreB = teamCombatScore(rowsB);
+                const actualA = scoreA > scoreB ? 1 : (scoreA < scoreB ? 0 : 0.5);
+                const actualB = 1 - actualA;
+                const avgEloA = rowsA.reduce((s, r) => s + ratings[r.name].elo, 0) / rowsA.length;
+                const avgEloB = rowsB.reduce((s, r) => s + ratings[r.name].elo, 0) / rowsB.length;
+                const mov = marginMultiplier(scoreA, scoreB, rowsA, rowsB);
+                rowsA.forEach(r => {
+                    const expected = 1 / (1 + Math.pow(10, (avgEloB - ratings[r.name].elo) / 400));
+                    teamDeltas[r.name] = TEAM_ELO_K * (actualA - expected) * mov;
+                });
+                rowsB.forEach(r => {
+                    const expected = 1 / (1 + Math.pow(10, (avgEloA - ratings[r.name].elo) / 400));
+                    teamDeltas[r.name] = TEAM_ELO_K * (actualB - expected) * mov;
+                });
+                const recordResult = (rowsSide, actual) => rowsSide.forEach(r => {
+                    if (actual === 1)
+                        ratings[r.name].wins += 1;
+                    else if (actual === 0)
+                        ratings[r.name].losses += 1;
+                    else
+                        ratings[r.name].draws += 1;
+                });
+                recordResult(rowsA, actualA);
+                recordResult(rowsB, actualB);
+                rows.forEach(r => {
+                    const mult = performanceMultiplier(composite[r.name]);
+                    ratings[r.name].elo += teamDeltas[r.name] * mult;
+                    ratings[r.name].battles += 1;
+                });
+            }
+            else {
+                const n = rows.length;
+                const deltas = {};
+                rows.forEach(a => {
+                    let actual = 0, expected = 0;
+                    rows.forEach(b => {
+                        if (a.name === b.name)
+                            return;
+                        const cA = composite[a.name], cB = composite[b.name];
+                        actual += cA > cB ? 1 : (cA < cB ? 0 : 0.5);
+                        expected += 1 / (1 + Math.pow(10, (ratings[b.name].elo - ratings[a.name].elo) / 400));
+                    });
+                    deltas[a.name] = (ELO_K / (n - 1)) * (actual - expected);
+                });
+                rows.forEach(r => { ratings[r.name].elo += deltas[r.name]; ratings[r.name].battles += 1; });
+            }
+        }
+        const allNames = Object.keys(ratings);
+        const todaysPrices = pricesFromEloSnapshot(ratings, allNames);
+        allNames.forEach(name => {
+            players[name].priceHistory.push({ day: rep.day, price: todaysPrices[name] });
+        });
+    });
+    return { players, ratings };
+}
+function recomputeMarket() {
+    const { players, ratings } = computeMarketFromReports(state.reports);
+    state.players = players;
+    state.elo = ratings;
+}
+function currentPrice(symbol) {
+    const p = state.players[symbol];
+    if (!p || p.priceHistory.length === 0)
+        return null;
+    return p.priceHistory[p.priceHistory.length - 1].price;
+}
+function priceAtOrBefore(symbol, day) {
+    const p = state.players[symbol];
+    if (!p)
+        return null;
+    let best = null;
+    p.priceHistory.forEach(ph => { if (ph.day <= day)
+        best = ph.price; });
+    if (best === null && p.priceHistory.length)
+        best = p.priceHistory[0].price;
+    return best;
+}
+function volatility(symbol) {
+    const p = state.players[symbol];
+    if (!p || p.priceHistory.length < 2)
+        return 0.25;
+    const prices = p.priceHistory.map(x => x.price);
+    const returns = [];
+    for (let i = 1; i < prices.length; i++)
+        if (prices[i - 1] > 0)
+            returns.push((prices[i] - prices[i - 1]) / prices[i - 1]);
+    if (returns.length === 0)
+        return 0.25;
+    const mean = returns.reduce((a, b) => a + b, 0) / returns.length;
+    const variance = returns.reduce((a, b) => a + Math.pow(b - mean, 2), 0) / returns.length;
+    return Math.max(0.05, Math.sqrt(variance));
+}
+function computeOptionPremium(symbol, strike, daysToExpiry, isPut) {
+    const price = currentPrice(symbol);
+    if (price === null)
+        return null;
+    const intrinsic = isPut ? Math.max(0, strike - price) : Math.max(0, price - strike);
+    const vol = volatility(symbol);
+    const timeValue = price * vol * Math.sqrt(Math.max(1, daysToExpiry)) * 0.4;
+    const premium = Math.max(0.5, intrinsic + timeValue);
+    return { price, intrinsic, timeValue, premium: Math.round(premium * 100) / 100 };
+}
+function generateStrikeChain(price) {
+    if (!price)
+        return [];
+    let step;
+    if (price < 20)
+        step = 0.5;
+    else if (price < 100)
+        step = 1;
+    else if (price < 300)
+        step = 2.5;
+    else
+        step = 5;
+    const atm = Math.round(price / step) * step;
+    const strikes = [];
+    for (let i = -6; i <= 6; i++) {
+        const s = Math.round((atm + i * step) * 100) / 100;
+        if (s > 0)
+            strikes.push(s);
+    }
+    return strikes;
+}
+function updateStrikeChain() {
+    const symbol = document.getElementById('optSymbol').value;
+    const sel = document.getElementById('optStrikeSelect');
+    const customField = document.getElementById('optStrikeCustomField');
+    customField.classList.add('hidden');
+    const price = currentPrice(symbol);
+    if (!symbol || price === null) {
+        sel.innerHTML = '<option value="">— select a stock first —</option>';
+        document.getElementById('optStrike').value = '';
+        return;
+    }
+    const isPut = state.tradeType === 'put';
+    const strikes = generateStrikeChain(price);
+    let closest = strikes[0], closestDiff = Infinity;
+    strikes.forEach(s => { const d = Math.abs(s - price); if (d < closestDiff) {
+        closest = s;
+        closestDiff = d;
+    } });
+    sel.innerHTML = strikes.map(s => {
+        const label = s === closest ? ' (ATM)' : ((isPut ? s > price : s < price) ? ' (ITM)' : ' (OTM)');
+        return '<option value="' + s + '">$' + s.toFixed(2) + label + '</option>';
+    }).join('') + '<option value="custom">Custom…</option>';
+    sel.value = closest;
+    document.getElementById('optStrike').value = closest;
+}
+function estimateTriggerProbability(symbol, threshold) {
+    const p = state.players[symbol];
+    if (!p || p.history.length < 2)
+        return 0.2;
+    const hits = p.history.filter(h => h.deaths >= threshold).length;
+    return Math.max(0.03, hits / p.history.length);
+}
+function computeSwapPremium(symbol, threshold, notional, daysToExpiry) {
+    const perReportProb = estimateTriggerProbability(symbol, threshold);
+    const probAtLeastOnce = 1 - Math.pow(1 - perReportProb, Math.max(1, daysToExpiry));
+    const premium = Math.max(0.5, notional * probAtLeastOnce * 1.15);
+    return { perReportProb, probAtLeastOnce, premium: Math.round(premium * 100) / 100 };
+}
+const TEST_PROFESSIONS = ['Commando', 'Bounty Hunter', 'Officer', 'Smuggler', 'Medic', 'Jedi'];
+const TEST_FACTIONS = ['Imperial', 'Rebel'];
+function randInt(min, max) { return Math.floor(Math.random() * (max - min + 1)) + min; }
+document.getElementById('dbgTestReport').addEventListener('click', async () => {
+    let names = Object.keys(state.players);
+    if (names.length === 0)
+        names = ['TESTPLAYER1', 'TESTPLAYER2', 'TESTPLAYER3', 'TESTPLAYER4'];
+    const players = names.map(name => {
+        const existing = state.players[name];
+        return {
+            name,
+            faction: existing ? existing.faction : TEST_FACTIONS[randInt(0, 1)],
+            profession: existing ? existing.profession : TEST_PROFESSIONS[randInt(0, TEST_PROFESSIONS.length - 1)],
+            kills: randInt(0, 12), assists: randInt(0, 35), deaths: randInt(0, 8),
+            damage: randInt(50000, 1500000), largestHit: randInt(1000, 12000),
+            damageTaken: randInt(50000, 900000), healing: randInt(0, 2200000),
+            largestHeal: randInt(0, 55000), captures: randInt(0, 2)
+        };
+    });
+    try {
+        await submitReport(players, '[debug] synthetic report', true);
+    }
+    catch (err) {
+        alert('Could not create synthetic report: ' + err.message);
+    }
+});
+document.getElementById('dbgFindDupes').addEventListener('click', async () => {
+    const out = document.getElementById('dupeResults');
+    out.textContent = 'Scanning ' + state.reports.length + ' existing reports…';
+    const byHash = {};
+    for (const rep of state.reports) {
+        const hash = await hashReportStats(rep.players);
+        (byHash[hash] = byHash[hash] || []).push(rep);
+    }
+    const dupGroups = Object.values(byHash)
+        .filter(g => g.length > 1)
+        .map(g => g.sort((a, b) => a.day - b.day));
+    if (dupGroups.length === 0) {
+        out.textContent = 'Checked ' + state.reports.length + ' reports — no duplicate stats found.';
+        return;
+    }
+    out.innerHTML = '<div style="color:var(--red); margin-bottom:8px;">' + dupGroups.length + ' set(s) of reports share identical player stats:</div>' +
+        dupGroups.map(group => '<div class="dupe-group">' + group.map((rep, i) => '<div>' + (i === 0 ? '✓ keep — ' : '✕ dup — ') + 'Day ' + rep.day + ' · ' + escapeHtml(rep.filename) +
+            (rep.isSynthetic ? ' [synthetic]' : '') + ' · by ' + escapeHtml(rep.uploadedByUsername || '?') +
+            (i === 0 ? '' : ' <button class="del-report" data-reportid="' + rep.id + '">Delete</button>') + '</div>').join('') + '</div>').join('');
+    out.querySelectorAll('.del-report').forEach(btn => btn.addEventListener('click', () => deleteReport(btn.dataset.reportid)));
+});
+document.getElementById('dbgMigrateReports').addEventListener('click', async () => {
+    const out = document.getElementById('dupeResults');
+    out.textContent = 'Analyzing ' + state.reports.length + ' reports…';
+    const snapshot = [...state.reports];
+    const byHash = {};
+    for (const rep of snapshot) {
+        const hash = await hashReportStats(rep.players);
+        (byHash[hash] = byHash[hash] || []).push({ hash, rep });
+    }
+    const toDelete = [];
+    const toRekey = [];
+    Object.values(byHash).forEach(group => {
+        group.sort((a, b) => a.rep.day - b.rep.day);
+        const [keep, ...extras] = group;
+        extras.forEach(e => toDelete.push(e.rep));
+        if (keep.rep.id !== keep.hash)
+            toRekey.push(keep);
+    });
+    if (toDelete.length === 0 && toRekey.length === 0) {
+        out.textContent = 'Checked ' + snapshot.length + ' reports — no duplicates, and every report is already filed under its duplicate-proof ID. Nothing to do.';
+        return;
+    }
+    const ok = confirm('Found ' + snapshot.length + ' reports.\n' +
+        toDelete.length + ' will be deleted as exact duplicates.\n' +
+        toRekey.length + ' unique report(s) will be re-filed under duplicate-proof IDs so future uploads get checked against them too.\n\n' +
+        'This cannot be undone. Continue?');
+    if (!ok) {
+        out.textContent = 'Cancelled — no changes made.';
+        return;
+    }
+    const ops = [];
+    toDelete.forEach(rep => ops.push({ type: 'delete', rep }));
+    toRekey.forEach(({ rep, hash }) => ops.push({ type: 'rekey', rep, hash }));
+    const CHUNK = 200;
+    let done = 0;
+    out.textContent = 'Working… 0 / ' + ops.length;
+    for (let i = 0; i < ops.length; i += CHUNK) {
+        const chunk = ops.slice(i, i + CHUNK);
+        const batch = writeBatch(db);
+        chunk.forEach(op => {
+            if (op.type === 'delete') {
+                batch.delete(doc(db, 'reports', op.rep.id));
+            }
+            else {
+                const { day, filename, uploadedBy, uploadedByUsername, uploadedAt, isSynthetic, players } = op.rep;
+                batch.set(doc(db, 'reports', op.hash), { day, filename, uploadedBy, uploadedByUsername, uploadedAt, isSynthetic, players });
+                batch.delete(doc(db, 'reports', op.rep.id));
+            }
+        });
+        await batch.commit();
+        done += chunk.length;
+        out.textContent = 'Working… ' + done + ' / ' + ops.length;
+    }
+    out.textContent = 'Done. Deleted ' + toDelete.length + ' duplicate report(s) and re-filed ' + toRekey.length + ' report(s) under duplicate-proof IDs. New uploads will now be checked against all of them, no matter how old.';
+});
+document.getElementById('dbgAdvanceDay').addEventListener('click', async () => {
+    const counterRef = doc(db, 'counters', 'day');
+    try {
+        await runTransaction(db, async (tx) => {
+            const snap = await tx.get(counterRef);
+            const current = snap.exists() ? snap.data().value : 0;
+            tx.set(counterRef, { value: current + 1 });
+        });
+    }
+    catch (err) {
+        alert('Could not advance the clock: ' + err.message);
+    }
+});
+document.getElementById('dbgJumpBtn').addEventListener('click', async () => {
+    const target = parseInt(document.getElementById('dbgJumpDay').value, 10);
+    if (isNaN(target) || target < state.day) {
+        alert('Enter a day greater than the current day (' + state.day + ').');
+        return;
+    }
+    try {
+        await setDoc(doc(db, 'counters', 'day'), { value: target });
+    }
+    catch (err) {
+        alert('Could not jump the clock: ' + err.message);
+    }
+});
+document.getElementById('dbgRecalc').addEventListener('click', recalculatePriceScale);
+document.getElementById('dbgSaveNameGroup').addEventListener('click', saveNameGroup);
+document.getElementById('nameGroupsList').addEventListener('click', (e) => {
+    const canon = e.target?.dataset?.removeGroup;
+    if (canon)
+        removeNameGroup(canon);
+});
+async function deleteReport(reportId) {
+    if (!confirm('Delete this report from the shared market? Prices for everyone will recompute without it.'))
+        return;
+    try {
+        await deleteDoc(doc(db, 'reports', reportId));
+    }
+    catch (err) {
+        alert('Could not delete report: ' + err.message);
+    }
+}
+document.querySelectorAll('.type-tabs button').forEach(btn => {
+    btn.addEventListener('click', () => {
+        state.tradeType = btn.dataset.type;
+        document.querySelectorAll('.type-tabs button').forEach(b => b.classList.remove('active'));
+        btn.classList.add('active');
+        document.getElementById('fieldsCallPut').classList.toggle('hidden', state.tradeType === 'swap');
+        document.getElementById('fieldsSwap').classList.toggle('hidden', state.tradeType !== 'swap');
+        document.getElementById('rowIntrinsic').style.display = state.tradeType === 'swap' ? 'none' : 'flex';
+        document.getElementById('rowProb').style.display = state.tradeType === 'swap' ? 'flex' : 'none';
+        document.getElementById('timeValueLabel').textContent = state.tradeType === 'swap' ? 'Risk-adjusted premium load' : 'Time value (volatility-based)';
+        const descs = {
+            call: 'Call: pays off if the stock finishes ABOVE your strike at expiry. Payoff = max(0, settle price minus strike) x contracts.',
+            put: 'Put: pays off if the stock finishes BELOW your strike at expiry. Payoff = max(0, strike minus settle price) x contracts.',
+            swap: "Elimination Swap (a fictional credit-default-swap analog): you're buying protection that pays a fixed notional the moment the player's Deaths in any single report hit your trigger, any time before expiry, not just at expiry. If it never triggers, it expires worthless."
+        };
+        document.getElementById('typeDesc').textContent = descs[state.tradeType];
+        if (state.tradeType !== 'swap')
+            updateStrikeChain();
+        renderPremiumPreview();
+    });
+});
+document.querySelector('.type-tabs button[data-type="call"]').click();
+async function buyContract() {
+    const symbol = document.getElementById('optSymbol').value;
+    const expiryDays = parseInt(document.getElementById('optExpiry').value, 10);
+    const qty = parseInt(document.getElementById('optQty').value, 10);
+    const msgEl = document.getElementById('buyMsg');
+    msgEl.className = 'msg';
+    msgEl.textContent = '';
+    if (!symbol) {
+        msgEl.className = 'msg err';
+        msgEl.textContent = 'Pick a stock first.';
+        return;
+    }
+    if (isNaN(expiryDays) || expiryDays < 1) {
+        msgEl.className = 'msg err';
+        msgEl.textContent = 'Expiry must be at least 1 day out.';
+        return;
+    }
+    if (isNaN(qty) || qty < 1) {
+        msgEl.className = 'msg err';
+        msgEl.textContent = 'Enter a valid contract quantity.';
+        return;
+    }
+    if (state.tradeType === 'swap') {
+        const threshold = parseInt(document.getElementById('swapThreshold').value, 10);
+        const notional = parseFloat(document.getElementById('swapNotional').value);
+        if (isNaN(threshold) || threshold < 1) {
+            msgEl.className = 'msg err';
+            msgEl.textContent = 'Enter a valid trigger threshold.';
+            return;
+        }
+        if (isNaN(notional) || notional <= 0) {
+            msgEl.className = 'msg err';
+            msgEl.textContent = 'Enter a valid notional payout.';
+            return;
+        }
+        const calc = computeSwapPremium(symbol, threshold, notional, expiryDays);
+        const premium = Math.round(calc.premium * 100) / 100;
+        const totalCost = premium * qty;
+        if (totalCost > state.cash) {
+            msgEl.className = 'msg err';
+            msgEl.textContent = 'Not enough cash. Need ' + fmtMoney(totalCost) + ', have ' + fmtMoney(state.cash) + '.';
+            return;
+        }
+        const positionData = {
+            type: 'swap', symbol, threshold, notional, expiryDay: state.day + expiryDays,
+            qty, premium, boughtDay: state.day, status: 'open', settlePrice: null, dismissed: false
+        };
+        await commitTrade(positionData, totalCost, 'Bought ' + qty + 'x ' + symbol + ' elimination swap (trigger: deaths >= ' + threshold + ')', msgEl);
+    }
+    else {
+        const strike = parseFloat(document.getElementById('optStrike').value);
+        if (isNaN(strike) || strike <= 0) {
+            msgEl.className = 'msg err';
+            msgEl.textContent = 'Enter a valid strike price.';
+            return;
+        }
+        const calc = computeOptionPremium(symbol, strike, expiryDays, state.tradeType === 'put');
+        if (!calc) {
+            msgEl.className = 'msg err';
+            msgEl.textContent = 'No price data for that stock yet.';
+            return;
+        }
+        const premium = Math.round(calc.premium * 100) / 100;
+        const totalCost = premium * qty;
+        if (totalCost > state.cash) {
+            msgEl.className = 'msg err';
+            msgEl.textContent = 'Not enough cash. Need ' + fmtMoney(totalCost) + ', have ' + fmtMoney(state.cash) + '.';
+            return;
+        }
+        const positionData = {
+            type: state.tradeType, symbol, strike, expiryDay: state.day + expiryDays,
+            qty, premium, boughtDay: state.day, status: 'open', settlePrice: null, dismissed: false
+        };
+        await commitTrade(positionData, totalCost, 'Bought ' + qty + 'x ' + symbol + ' $' + strike.toFixed(2) + ' ' + state.tradeType, msgEl);
+    }
+}
+async function commitTrade(positionData, totalCost, successMsg, msgEl) {
+    try {
+        const posRef = doc(collection(db, 'users', state.uid, 'positions'));
+        const userRef = doc(db, 'users', state.uid);
+        const batch = writeBatch(db);
+        batch.set(posRef, { ...positionData, cashDelta: -totalCost, realizedDelta: 0 });
+        batch.update(userRef, { cash: state.cash - totalCost, realized: state.realized, lastTradeId: posRef.id });
+        await batch.commit();
+        msgEl.className = 'msg ok';
+        msgEl.textContent = successMsg + ', expiring day ' + positionData.expiryDay + '.';
+    }
+    catch (err) {
+        msgEl.className = 'msg err';
+        msgEl.textContent = 'Trade failed: ' + err.message;
+    }
+}
+document.getElementById('buyBtn').addEventListener('click', buyContract);
+async function settleOptionPosition(pos, settleDay) {
+    const settlePrice = priceAtOrBefore(pos.symbol, settleDay) ?? currentPrice(pos.symbol) ?? 0;
+    const payoff = pos.type === 'put'
+        ? Math.max(0, pos.strike - settlePrice) * pos.qty
+        : Math.max(0, settlePrice - pos.strike) * pos.qty;
+    await applySettlement(pos, settlePrice, payoff);
+}
+async function settleSwapPosition(pos, triggered) {
+    const settlePrice = currentPrice(pos.symbol) ?? 0;
+    const payoff = triggered ? pos.notional * pos.qty : 0;
+    await applySettlement(pos, settlePrice, payoff);
+}
+async function applySettlement(pos, settlePrice, payoff) {
+    const cost = pos.premium * pos.qty;
+    const status = payoff > 0 ? 'won' : 'lost';
+    const posRef = doc(db, 'users', state.uid, 'positions', pos.id);
+    const userRef = doc(db, 'users', state.uid);
+    const batch = writeBatch(db);
+    batch.update(posRef, { status, settlePrice, payoff, cashDelta: payoff, realizedDelta: payoff - cost });
+    batch.update(userRef, { cash: state.cash + payoff, realized: state.realized + (payoff - cost), lastTradeId: pos.id });
+    await batch.commit();
+}
+async function checkAndSettlePositions() {
+    for (const pos of state.positions) {
+        if (pos.status !== 'open' || pos.type === 'stock')
+            continue;
+        if (pos.type === 'swap') {
+            const relevantReports = state.reports
+                .filter(r => r.day > pos.boughtDay && r.day <= pos.expiryDay)
+                .sort((a, b) => a.day - b.day);
+            let triggered = false;
+            for (const rep of relevantReports) {
+                const row = rep.players.find(p => p.name === pos.symbol);
+                if (row && row.deaths >= pos.threshold) {
+                    triggered = true;
+                    break;
+                }
+            }
+            if (triggered) {
+                await settleSwapPosition(pos, true);
+            }
+            else if (state.day >= pos.expiryDay) {
+                await settleSwapPosition(pos, false);
+            }
+        }
+        else {
+            if (state.day >= pos.expiryDay) {
+                await settleOptionPosition(pos, pos.expiryDay);
+            }
+        }
+    }
+}
+async function dismissPosition(posId) {
+    await updateDoc(doc(db, 'users', state.uid, 'positions', posId), { dismissed: true });
+}
+async function closePositionEarly(posId) {
+    const pos = state.positions.find(p => p.id === posId);
+    if (!pos || pos.status !== 'open' || pos.type === 'stock')
+        return;
+    if (!confirm('Close this position now and lock in its current value?'))
+        return;
+    const price = currentPrice(pos.symbol) ?? 0;
+    let payoff;
+    if (pos.type === 'swap') {
+        const remaining = Math.max(1, pos.expiryDay - state.day);
+        payoff = computeSwapPremium(pos.symbol, pos.threshold, pos.notional, remaining).premium * pos.qty;
+    }
+    else {
+        payoff = (pos.type === 'put' ? Math.max(0, pos.strike - price) : Math.max(0, price - pos.strike)) * pos.qty;
+    }
+    payoff = Math.round(payoff * 100) / 100;
+    const realizedDelta = payoff - pos.premium * pos.qty;
+    try {
+        const posRef = doc(db, 'users', state.uid, 'positions', pos.id);
+        const userRef = doc(db, 'users', state.uid);
+        const batch = writeBatch(db);
+        batch.update(posRef, { status: payoff > 0 ? 'won' : 'lost', settlePrice: price, payoff, closedEarly: true, cashDelta: payoff, realizedDelta });
+        batch.update(userRef, { cash: state.cash + payoff, realized: state.realized + realizedDelta, lastTradeId: pos.id });
+        await batch.commit();
+    }
+    catch (err) {
+        alert('Could not close position: ' + err.message);
+    }
+}
+function escapeHtml(s) { return String(s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c])); }
+const CLASS_PALETTE = ['#7fe6da', '#5db0e6', '#e0b34d', '#ff6b5d', '#c792ea', '#7fd1ff', '#ffe066', '#8fd6c8'];
+function classColor(cls) {
+    const s = String(cls || 'Unknown');
+    let hash = 0;
+    for (let i = 0; i < s.length; i++)
+        hash = (hash * 31 + s.charCodeAt(i)) >>> 0;
+    return CLASS_PALETTE[hash % CLASS_PALETTE.length];
+}
+function fmtMoney(n) { return '$' + Number(n).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 }); }
+let chart = null;
+function renderChart() {
+    const ctx = document.getElementById('priceChart').getContext('2d');
+    const symbols = Array.from(state.selectedSymbols);
+    const palette = ['#7fe6da', '#5db0e6', '#e0b34d', '#ff6b5d', '#c792ea', '#7fd1ff', '#ffe066'];
+    const datasets = symbols.map((sym, i) => ({
+        label: sym,
+        data: state.players[sym] ? state.players[sym].priceHistory.map(h => ({ x: h.day, y: h.price })) : [],
+        borderColor: palette[i % palette.length], backgroundColor: 'transparent', tension: 0.25, pointRadius: 3
+    }));
+    if (chart)
+        chart.destroy();
+    chart = new Chart(ctx, { type: 'line', data: { datasets }, options: {
+            responsive: true, interaction: { mode: 'nearest', intersect: false },
+            scales: { x: { type: 'linear', ticks: { color: '#93bdb9', stepSize: 1, callback: v => 'Day ' + v }, grid: { color: '#2c4d4f' }, title: { display: true, text: 'Trading day', color: '#93bdb9' } },
+                y: { ticks: { color: '#93bdb9' }, grid: { color: '#2c4d4f' } } },
+            plugins: { legend: { labels: { color: '#d7ecdf' } } }
+        } });
+}
+function sparkline(priceHistory) {
+    const w = 70, h = 24;
+    if (priceHistory.length < 2)
+        return '<svg class="spark" viewBox="0 0 ' + w + ' ' + h + '"></svg>';
+    const prices = priceHistory.map(p => p.price);
+    const min = Math.min(...prices), max = Math.max(...prices), range = (max - min) || 1;
+    const step = w / (prices.length - 1);
+    const pts = prices.map((p, i) => (i * step).toFixed(1) + ',' + (h - ((p - min) / range) * h).toFixed(1)).join(' ');
+    const color = prices[prices.length - 1] >= prices[0] ? '#7fe6da' : '#ff6b5d';
+    return '<svg class="spark" viewBox="0 0 ' + w + ' ' + h + '"><polyline points="' + pts + '" fill="none" stroke="' + color + '" stroke-width="1.6"/></svg>';
+}
+function renderTicker() {
+    const body = document.getElementById('tickerBody');
+    const allSymbols = Object.keys(state.players).sort((a, b) => (currentPrice(b) || 0) - (currentPrice(a) || 0));
+    document.getElementById('tickerSub').textContent = allSymbols.length ? (allSymbols.length + ' stocks listed — day ' + state.day) : 'no stocks listed yet';
+    const q = (state.tickerSearch || '').trim().toLowerCase();
+    const symbols = q ? allSymbols.filter(sym => sym.toLowerCase().includes(q) || (state.players[sym].profession || '').toLowerCase().includes(q)) : allSymbols;
+    if (allSymbols.length === 0) {
+        body.innerHTML = '<tr><td colspan="7" class="empty-state">Upload a battle report to list the first stocks.</td></tr>';
+    }
+    else if (symbols.length === 0) {
+        body.innerHTML = '<tr><td colspan="7" class="empty-state">No symbols match “' + escapeHtml(state.tickerSearch) + '”.</td></tr>';
+    }
+    else {
+        body.innerHTML = symbols.map(sym => {
+            const p = state.players[sym];
+            const ph = p.priceHistory;
+            const price = ph[ph.length - 1].price;
+            const prev = ph.length > 1 ? ph[ph.length - 2].price : price;
+            const chg = price - prev, chgPct = prev ? (chg / prev * 100) : 0;
+            const chgClass = chg > 0 ? 'up' : chg < 0 ? 'down' : 'flat';
+            const arrow = chg > 0 ? '▲' : chg < 0 ? '▼' : '—';
+            const vol = volatility(sym);
+            return '<tr>'
+                + '<td><div class="sym">' + escapeHtml(sym) + '</div></td>'
+                + '<td><span class="cls-pill" style="color:' + classColor(p.profession) + '">' + escapeHtml(p.profession) + '</span></td>'
+                + '<td class="price">' + fmtMoney(price) + '</td>'
+                + '<td class="chg ' + chgClass + '">' + arrow + ' ' + (chg >= 0 ? '+' : '') + chg.toFixed(2) + ' (' + chgPct.toFixed(1) + '%)</td>'
+                + '<td style="color:var(--text-dim)">' + (vol * 100).toFixed(0) + '%</td>'
+                + '<td>' + sparkline(ph) + '</td>'
+                + '<td><button type="button" class="buy-btn" data-symbol="' + escapeHtml(sym) + '">Options</button> <button type="button" class="buy-btn" data-asset-symbol="' + escapeHtml(sym) + '">Buy Stock</button></td>'
+                + '</tr>';
+        }).join('');
+        body.querySelectorAll('button[data-symbol]').forEach(btn => btn.addEventListener('click', () => {
+            document.getElementById('optSymbol').value = btn.dataset.symbol;
+            document.getElementById('optSymbol').dispatchEvent(new Event('change'));
+        }));
+        body.querySelectorAll('button[data-asset-symbol]').forEach(btn => btn.addEventListener('click', () => {
+            setAssetSymbol(btn.dataset.assetSymbol);
+            activateNav(navAssets, viewAssets);
+            renderAssets();
+            document.getElementById('assetSymbol').focus();
+        }));
+    }
+    const sel = document.getElementById('optSymbol');
+    const prevVal = sel.value;
+    sel.innerHTML = '<option value="">— select a stock —</option>' + allSymbols.map(s => '<option value="' + escapeHtml(s) + '">' + escapeHtml(s) + ' — ' + fmtMoney(currentPrice(s)) + '</option>').join('');
+    if (allSymbols.includes(prevVal))
+        sel.value = prevVal;
+    const pills = document.getElementById('legendPills');
+    pills.innerHTML = allSymbols.slice(0, 30).map(s => '<button type="button" data-symbol="' + escapeHtml(s) + '" class="' + (state.selectedSymbols.has(s) ? 'active' : '') + '">' + escapeHtml(s) + '</button>').join('');
+    pills.querySelectorAll('button').forEach(btn => {
+        btn.style.background = state.selectedSymbols.has(btn.dataset.symbol) ? 'var(--phosphor-dim)' : '';
+        btn.addEventListener('click', (e) => {
+            e.preventDefault();
+            const scrollY = window.scrollY;
+            if (state.selectedSymbols.has(btn.dataset.symbol))
+                state.selectedSymbols.delete(btn.dataset.symbol);
+            else
+                state.selectedSymbols.add(btn.dataset.symbol);
+            btn.classList.toggle('active', state.selectedSymbols.has(btn.dataset.symbol));
+            btn.style.background = state.selectedSymbols.has(btn.dataset.symbol) ? 'var(--phosphor-dim)' : '';
+            renderChart();
+            btn.blur();
+            window.scrollTo(0, scrollY);
+        });
+    });
+    document.getElementById('dayTick').textContent = state.reports.length
+        ? ('DAY ' + state.day + ' — ' + state.reports.length + ' report' + (state.reports.length > 1 ? 's' : '') + ' on record')
+        : 'DAY 0 — AWAITING FIRST REPORT';
+    renderReportLogFromState();
+}
+function renderReportLogFromState() {
+    const log = document.getElementById('reportLog');
+    const sorted = [...state.reports].sort((a, b) => b.day - a.day);
+    Array.from(log.querySelectorAll('.row:not([data-manual])')).forEach(r => r.remove());
+    sorted.forEach(rep => {
+        const row = document.createElement('div');
+        row.className = 'row';
+        const delBtn = state.isAdmin ? '<button class="del-report" data-reportid="' + rep.id + '">Delete</button>' : '';
+        row.innerHTML = '<span>Day ' + rep.day + ' · ' + escapeHtml(rep.filename) + (rep.isSynthetic ? ' [synthetic]' : '') + '</span><span>' + rep.players.length + ' stocks · by ' + escapeHtml(rep.uploadedByUsername || '?') + ' ' + delBtn + '</span>';
+        log.appendChild(row);
+    });
+    log.querySelectorAll('.del-report').forEach(btn => btn.addEventListener('click', () => deleteReport(btn.dataset.reportid)));
+}
+function renderPremiumPreview() {
+    const symbol = document.getElementById('optSymbol').value;
+    const expiryDays = parseInt(document.getElementById('optExpiry').value, 10) || 1;
+    const qty = parseInt(document.getElementById('optQty').value, 10) || 1;
+    const buyBtn = document.getElementById('buyBtn');
+    if (!symbol) {
+        ['pbCurrent', 'pbIntrinsic', 'pbProb', 'pbTime', 'pbPremium', 'pbTotal'].forEach(id => document.getElementById(id).textContent = '—');
+        buyBtn.disabled = true;
+        buyBtn.textContent = 'Select a stock first';
+        return;
+    }
+    const price = currentPrice(symbol);
+    document.getElementById('pbCurrent').textContent = fmtMoney(price);
+    if (state.tradeType === 'swap') {
+        const threshold = parseInt(document.getElementById('swapThreshold').value, 10) || 1;
+        const notional = parseFloat(document.getElementById('swapNotional').value) || 0;
+        const calc = computeSwapPremium(symbol, threshold, notional, expiryDays);
+        document.getElementById('pbProb').textContent = (calc.probAtLeastOnce * 100).toFixed(1) + '%';
+        document.getElementById('pbTime').textContent = fmtMoney(calc.premium);
+        document.getElementById('pbPremium').textContent = fmtMoney(calc.premium);
+        document.getElementById('pbTotal').textContent = fmtMoney(calc.premium * qty);
+        buyBtn.disabled = false;
+        buyBtn.textContent = 'Buy ' + qty + 'x ' + symbol + ' Elim. Swap';
+    }
+    else {
+        const strikeInput = document.getElementById('optStrike');
+        if (!strikeInput.value && price)
+            strikeInput.value = price.toFixed(2);
+        const strike = parseFloat(strikeInput.value) || price;
+        const calc = computeOptionPremium(symbol, strike, expiryDays, state.tradeType === 'put');
+        if (!calc)
+            return;
+        document.getElementById('pbIntrinsic').textContent = fmtMoney(calc.intrinsic);
+        document.getElementById('pbTime').textContent = fmtMoney(calc.timeValue);
+        document.getElementById('pbPremium').textContent = fmtMoney(calc.premium);
+        document.getElementById('pbTotal').textContent = fmtMoney(calc.premium * qty);
+        buyBtn.disabled = false;
+        buyBtn.textContent = 'Buy ' + qty + 'x ' + symbol + ' $' + strike.toFixed(2) + ' ' + (state.tradeType === 'put' ? 'Put' : 'Call');
+    }
+}
+function stockPositionId(symbol) {
+    return 'stock_' + encodeURIComponent(symbol).replace(/\./g, '%2E');
+}
+function getStockPositions() {
+    return state.positions.filter(p => p.type === 'stock' && p.status === 'open' && p.qty > 0);
+}
+function setAssetSymbol(symbol) {
+    state.assetSymbol = symbol || '';
+    const sel = document.getElementById('assetSymbol');
+    if (sel)
+        sel.value = state.assetSymbol;
+    renderAssetPreview();
+}
+function renderAssetPreview() {
+    const symbol = document.getElementById('assetSymbol')?.value || state.assetSymbol || '';
+    const qty = parseInt(document.getElementById('assetQty')?.value, 10) || 1;
+    const price = currentPrice(symbol);
+    document.getElementById('assetCurrent').textContent = price == null ? '—' : fmtMoney(price);
+    document.getElementById('assetShares').textContent = symbol ? String(qty) : '—';
+    document.getElementById('assetTotal').textContent = price == null ? '—' : fmtMoney(price * qty);
+    const btn = document.getElementById('assetBuyBtn');
+    btn.disabled = price == null || qty < 1;
+    btn.textContent = symbol && price != null ? 'Buy ' + qty + 'x ' + symbol : 'Select a stock first';
+}
+async function fetchCanonicalPrice(symbol) {
+    const pointerSnap = await getDoc(doc(db, 'market', 'latestReportId'));
+    if (!pointerSnap.exists())
+        return null;
+    const priceSnap = await getDoc(doc(db, 'pricesByReport', pointerSnap.data().reportId));
+    if (!priceSnap.exists())
+        return null;
+    const price = priceSnap.data().prices ? priceSnap.data().prices[symbol] : null;
+    return (typeof price === 'number') ? price : null;
+}
+async function buyStock() {
+    const symbol = document.getElementById('assetSymbol').value;
+    const qty = parseInt(document.getElementById('assetQty').value, 10);
+    const msg = document.getElementById('assetMsg');
+    msg.className = 'msg';
+    msg.textContent = '';
+    if (!symbol) {
+        msg.className = 'msg err';
+        msg.textContent = 'Pick a stock first.';
+        return;
+    }
+    if (isNaN(qty) || qty < 1) {
+        msg.className = 'msg err';
+        msg.textContent = 'Enter a valid share quantity.';
+        return;
+    }
+    let filledPrice;
+    try {
+        const posRef = doc(db, 'users', state.uid, 'positions', stockPositionId(symbol));
+        const userRef = doc(db, 'users', state.uid);
+        const pointerRef = doc(db, 'market', 'latestReportId');
+        await runTransaction(db, async (tx) => {
+            const pointerSnap = await tx.get(pointerRef);
+            if (!pointerSnap.exists())
+                throw new Error("Market price for this stock isn't published yet — try again in a moment.");
+            const priceSnap = await tx.get(doc(db, 'pricesByReport', pointerSnap.data().reportId));
+            const price = priceSnap.exists() && priceSnap.data().prices ? priceSnap.data().prices[symbol] : null;
+            if (typeof price !== 'number')
+                throw new Error("Market price for this stock isn't published yet — try again in a moment.");
+            const cost = price * qty;
+            const userSnap = await tx.get(userRef);
+            const userData = userSnap.data();
+            if (cost > userData.cash)
+                throw new Error('Not enough cash. Need ' + fmtMoney(cost) + ', have ' + fmtMoney(userData.cash) + '.');
+            const posSnap = await tx.get(posRef);
+            const existing = posSnap.exists() ? posSnap.data() : null;
+            let newQty, avgCost, boughtDay;
+            if (existing && existing.type === 'stock' && existing.status === 'open') {
+                newQty = Number(existing.qty || 0) + qty;
+                avgCost = Math.round((((Number(existing.qty || 0) * Number(existing.avgCost || 0)) + cost) / newQty) * 100) / 100;
+                boughtDay = existing.boughtDay ?? state.day;
+            }
+            else {
+                newQty = qty;
+                avgCost = price;
+                boughtDay = state.day;
+            }
+            tx.set(posRef, { type: 'stock', symbol, qty: newQty, avgCost, boughtDay, status: 'open', dismissed: false, cashDelta: -cost, realizedDelta: 0 });
+            tx.update(userRef, { cash: userData.cash - cost, realized: userData.realized, lastTradeId: posRef.id });
+            filledPrice = price;
+        });
+        renderAssets();
+        renderStats();
+        msg.className = 'msg ok';
+        msg.textContent = 'Bought ' + qty + ' share' + (qty === 1 ? '' : 's') + ' of ' + symbol + ' at ' + fmtMoney(filledPrice) + '.';
+    }
+    catch (err) {
+        msg.className = 'msg err';
+        msg.textContent = 'Stock purchase failed: ' + err.message;
+    }
+}
+async function sellStock(symbol, sellQty) {
+    const pos = state.positions.find(p => p.type === 'stock' && p.status === 'open' && p.symbol === symbol);
+    if (!pos)
+        return;
+    sellQty = Math.floor(Number(sellQty));
+    if (!sellQty || sellQty < 1)
+        return;
+    if (sellQty > pos.qty) {
+        alert('You only own ' + pos.qty + ' share' + (pos.qty === 1 ? '' : 's') + ' of ' + symbol + '.');
+        return;
+    }
+    const estimate = await fetchCanonicalPrice(symbol);
+    if (estimate == null) {
+        alert("Market price for this stock isn't published yet — try again in a moment.");
+        return;
+    }
+    const estProceeds = Math.round(estimate * sellQty * 100) / 100;
+    if (!confirm('Sell ' + sellQty + 'x ' + symbol + ' at ' + fmtMoney(estimate) + ' for ' + fmtMoney(estProceeds) + '?'))
+        return;
+    try {
+        const posRef = doc(db, 'users', state.uid, 'positions', pos.id);
+        const userRef = doc(db, 'users', state.uid);
+        const pointerRef = doc(db, 'market', 'latestReportId');
+        await runTransaction(db, async (tx) => {
+            const pointerSnap = await tx.get(pointerRef);
+            if (!pointerSnap.exists())
+                throw new Error("Market price for this stock isn't published yet — try again in a moment.");
+            const priceSnap = await tx.get(doc(db, 'pricesByReport', pointerSnap.data().reportId));
+            const price = priceSnap.exists() && priceSnap.data().prices ? priceSnap.data().prices[symbol] : null;
+            if (typeof price !== 'number')
+                throw new Error("Market price for this stock isn't published yet — try again in a moment.");
+            const posSnap = await tx.get(posRef);
+            if (!posSnap.exists() || posSnap.data().status !== 'open')
+                throw new Error('This position is no longer open.');
+            const posData = posSnap.data();
+            if (sellQty > posData.qty)
+                throw new Error('You only own ' + posData.qty + ' share' + (posData.qty === 1 ? '' : 's') + ' of ' + symbol + '.');
+            const proceeds = Math.round(price * sellQty * 100) / 100;
+            const pnl = Math.round((price - Number(posData.avgCost || 0)) * sellQty * 100) / 100;
+            const remaining = posData.qty - sellQty;
+            if (remaining > 0) {
+                tx.update(posRef, { qty: remaining, lastSellPrice: price, lastSellDay: state.day, cashDelta: proceeds, realizedDelta: pnl });
+            }
+            else {
+                tx.update(posRef, { qty: 0, status: 'sold', sellPrice: price, sellDay: state.day, payoff: proceeds, realizedPnl: pnl, dismissed: false, cashDelta: proceeds, realizedDelta: pnl });
+            }
+            const userSnap = await tx.get(userRef);
+            const userData = userSnap.data();
+            tx.update(userRef, { cash: userData.cash + proceeds, realized: userData.realized + pnl, lastTradeId: posRef.id });
+        });
+        renderAssets();
+        renderStats();
+    }
+    catch (err) {
+        alert('Could not sell stock: ' + err.message);
+    }
+}
+function renderAssets() {
+    const sel = document.getElementById('assetSymbol');
+    if (!sel)
+        return;
+    const symbols = Object.keys(state.players).sort();
+    const prev = state.assetSymbol || sel.value;
+    sel.innerHTML = '<option value="">— select a stock —</option>' + symbols.map(s => '<option value="' + escapeHtml(s) + '">' + escapeHtml(s) + ' — ' + fmtMoney(currentPrice(s)) + '</option>').join('');
+    if (symbols.includes(prev)) {
+        sel.value = prev;
+        state.assetSymbol = prev;
+    }
+    else {
+        sel.value = '';
+        state.assetSymbol = '';
+    }
+    renderAssetPreview();
+    const body = document.getElementById('assetsBody');
+    const holdings = getStockPositions().sort((a, b) => a.symbol.localeCompare(b.symbol));
+    const totalShares = holdings.reduce((s, p) => s + p.qty, 0);
+    document.getElementById('assetSub').textContent = totalShares + ' share' + (totalShares === 1 ? '' : 's');
+    if (!holdings.length) {
+        body.innerHTML = '<div class="empty-state">No stock holdings yet.</div>';
+        return;
+    }
+    body.innerHTML = holdings.map(pos => {
+        const price = currentPrice(pos.symbol) || 0, value = price * pos.qty, cost = Number(pos.avgCost || 0) * pos.qty, pnl = value - cost, pnlPct = cost ? ((pnl / cost) * 100) : 0;
+        return '<div class="pos-card">'
+            + '<div class="top"><span class="kind">STOCK</span><span class="sym">' + escapeHtml(pos.symbol) + '</span><span class="tag open">OWNED · ' + pos.qty + '</span></div>'
+            + '<div class="detail"><span>Market price</span><b>' + fmtMoney(price) + '</b></div>'
+            + '<div class="detail"><span>Average cost</span><b>' + fmtMoney(pos.avgCost) + '</b></div>'
+            + '<div class="detail"><span>Market value</span><b>' + fmtMoney(value) + '</b></div>'
+            + '<div class="detail"><span>Unrealized P&amp;L</span><b style="color:' + (pnl >= 0 ? 'var(--phosphor)' : 'var(--red)') + '">' + (pnl >= 0 ? '+' : '') + fmtMoney(pnl) + ' (' + (pnlPct >= 0 ? '+' : '') + pnlPct.toFixed(1) + '%)</b></div>'
+            + '<div style="margin-top:8px; display:flex; gap:6px; align-items:center; justify-content:flex-end;">'
+            + '<input type="number" min="1" max="' + pos.qty + '" step="1" value="' + pos.qty + '" data-sellqty="' + escapeHtml(pos.symbol) + '" style="width:82px; background:var(--panel-2); border:1px solid var(--line); color:var(--text); padding:4px 6px; font-family:var(--mono);">'
+            + '<button class="close-btn" data-sellid="' + escapeHtml(pos.symbol) + '">Sell</button></div>'
+            + '</div>';
+    }).join('');
+    body.querySelectorAll('[data-sellid]').forEach(btn => btn.addEventListener('click', () => {
+        const input = Array.from(body.querySelectorAll('[data-sellqty]')).find(el => el.dataset.sellqty === btn.dataset.sellid);
+        sellStock(btn.dataset.sellid, input ? input.value : 1);
+    }));
+}
+function renderPositions() {
+    const body = document.getElementById('positionsBody');
+    const visible = state.positions.filter(p => p.type !== 'stock' && (p.status === 'open' || !p.dismissed));
+    const open = state.positions.filter(p => p.type !== 'stock' && p.status === 'open');
+    const shares = getStockPositions().reduce((sum, p) => sum + Number(p.qty || 0), 0);
+    document.getElementById('posSub').textContent = open.length + ' derivative' + (open.length === 1 ? '' : 's') + ' · ' + shares + ' share' + (shares === 1 ? '' : 's');
+    if (visible.length === 0) {
+        body.innerHTML = '<div class="empty-state">No derivative contracts yet. Stock holdings live under Assets.</div>';
+        return;
+    }
+    const sorted = [...visible].sort((a, b) => (b.boughtDay - a.boughtDay));
+    body.innerHTML = sorted.map(renderPositionCard).join('');
+    body.querySelectorAll('[data-dismissid]').forEach(btn => btn.addEventListener('click', () => dismissPosition(btn.dataset.dismissid)));
+    body.querySelectorAll('[data-closeid]').forEach(btn => btn.addEventListener('click', () => closePositionEarly(btn.dataset.closeid)));
+}
+function renderPositionCard(pos) {
+    const price = currentPrice(pos.symbol) || 0;
+    const kindLabel = pos.type === 'swap' ? 'Elimination Swap' : (pos.type === 'put' ? 'Put' : 'Call');
+    if (pos.status === 'open') {
+        const daysLeft = pos.expiryDay - state.day;
+        let mainLine, markValue, closeValue;
+        if (pos.type === 'swap') {
+            mainLine = 'Trigger: deaths >= ' + pos.threshold + ' · Notional ' + fmtMoney(pos.notional);
+            markValue = 0;
+            const remaining = Math.max(1, pos.expiryDay - state.day);
+            closeValue = computeSwapPremium(pos.symbol, pos.threshold, pos.notional, remaining).premium * pos.qty;
+        }
+        else {
+            markValue = pos.type === 'put' ? Math.max(0, pos.strike - price) * pos.qty : Math.max(0, price - pos.strike) * pos.qty;
+            mainLine = 'Strike ' + fmtMoney(pos.strike) + ' · Current ' + fmtMoney(price);
+            closeValue = markValue;
+        }
+        return '<div class="pos-card">'
+            + '<div class="top"><span class="kind">' + kindLabel + '</span><span class="sym">' + escapeHtml(pos.symbol) + '</span><span class="tag open">OPEN · ' + (daysLeft <= 0 ? 'settles next tick' : daysLeft + ' day' + (daysLeft !== 1 ? 's' : '') + ' left') + '</span></div>'
+            + '<div class="detail"><span>' + mainLine + '</span></div>'
+            + '<div class="detail"><span>Contracts</span><b>' + pos.qty + '</b></div>'
+            + '<div class="detail"><span>Premium paid</span><b>' + fmtMoney(pos.premium * pos.qty) + '</b></div>'
+            + (pos.type !== 'swap' ? ('<div class="detail"><span>Mark-to-market</span><b>' + fmtMoney(markValue) + '</b></div>') : '')
+            + '<div class="detail"><span>Close now for</span><b>' + fmtMoney(closeValue) + '</b></div>'
+            + '<div style="margin-top:8px; text-align:right;"><button class="close-btn" data-closeid="' + pos.id + '">Close position</button></div>'
+            + '</div>';
+    }
+    else {
+        const cls = pos.status === 'won' ? 'settled-win' : 'settled-loss';
+        const netPl = pos.payoff - (pos.premium * pos.qty);
+        return '<div class="pos-card ' + cls + '">'
+            + '<div class="top"><span class="kind">' + kindLabel + '</span><span class="sym">' + escapeHtml(pos.symbol) + '</span><span class="tag ' + (pos.status === 'won' ? 'win' : 'loss') + '">' + (pos.status === 'won' ? 'SETTLED — WON' : 'SETTLED — LOST') + (pos.closedEarly ? ' (CLOSED EARLY)' : '') + '<button class="dismiss-btn" data-dismissid="' + pos.id + '">Dismiss</button></span></div>'
+            + '<div class="detail"><span>Settled at</span><b>' + fmtMoney(pos.settlePrice || 0) + '</b></div>'
+            + '<div class="detail"><span>Payoff</span><b>' + fmtMoney(pos.payoff) + '</b></div>'
+            + '<div class="detail"><span>Net P&amp;L</span><b style="color:' + (netPl >= 0 ? 'var(--phosphor)' : 'var(--red)') + '">' + (netPl >= 0 ? '+' : '') + fmtMoney(netPl) + '</b></div>'
+            + '</div>';
+    }
+}
+function renderHistory() {
+    const settled = state.positions.filter(p => p.type !== 'stock' && p.status !== 'open');
+    const filtered = settled.filter(p => state.historyFilter === 'all' ? true : (state.historyFilter === 'won' ? p.status === 'won' : p.status === 'lost'));
+    const sorted = [...filtered].sort((a, b) => b.expiryDay - a.expiryDay);
+    const wins = settled.filter(p => p.status === 'won').length, losses = settled.filter(p => p.status === 'lost').length;
+    const totalRealized = settled.reduce((sum, p) => sum + (p.payoff - p.premium * p.qty), 0);
+    const winRate = settled.length ? (wins / settled.length * 100) : 0;
+    document.getElementById('historyStats').innerHTML =
+        '<div class="stat"><div class="label">CONTRACTS SETTLED</div><div class="value">' + settled.length + '</div></div>'
+            + '<div class="stat"><div class="label">WIN RATE</div><div class="value">' + winRate.toFixed(0) + '% <span style="font-size:12px;color:var(--text-dim)">(' + wins + 'W / ' + losses + 'L)</span></div></div>'
+            + '<div class="stat"><div class="label">TOTAL REALIZED P&amp;L</div><div class="value" style="color:' + (totalRealized >= 0 ? 'var(--phosphor)' : 'var(--red)') + '">' + (totalRealized >= 0 ? '+' : '') + fmtMoney(totalRealized) + '</div></div>';
+    const body = document.getElementById('historyBody');
+    if (sorted.length === 0) {
+        body.innerHTML = '<tr><td colspan="11" class="empty-state">No settled contracts' + (state.historyFilter !== 'all' ? ' matching this filter' : ' yet') + '.</td></tr>';
+        return;
+    }
+    body.innerHTML = sorted.map(pos => {
+        const netPl = pos.payoff - (pos.premium * pos.qty);
+        const kindLabel = pos.type === 'swap' ? 'Swap' : (pos.type === 'put' ? 'Put' : 'Call');
+        const strikeCol = pos.type === 'swap' ? ('deaths>=' + pos.threshold) : fmtMoney(pos.strike);
+        return '<tr>'
+            + '<td>' + kindLabel + '</td><td class="sym">' + escapeHtml(pos.symbol) + '</td><td>' + strikeCol + '</td>'
+            + '<td>Day ' + pos.boughtDay + '</td><td>Day ' + pos.expiryDay + '</td><td>' + fmtMoney(pos.settlePrice || 0) + '</td>'
+            + '<td>' + pos.qty + '</td><td>' + fmtMoney(pos.premium * pos.qty) + '</td><td>' + fmtMoney(pos.payoff) + '</td>'
+            + '<td class="' + (netPl >= 0 ? 'win-text' : 'loss-text') + '">' + (netPl >= 0 ? '+' : '') + fmtMoney(netPl) + '</td>'
+            + '<td class="' + (pos.status === 'won' ? 'win-text' : 'loss-text') + '">' + (pos.status === 'won' ? 'WON' : 'LOST') + (pos.closedEarly ? ' (early)' : '') + '</td>'
+            + '</tr>';
+    }).join('');
+}
+function computeOpenValue(positions) {
+    return positions.filter(p => p.status === 'open').reduce((sum, pos) => {
+        if (pos.type === 'stock')
+            return sum + (currentPrice(pos.symbol) || 0) * pos.qty;
+        if (pos.type === 'swap')
+            return sum;
+        const price = currentPrice(pos.symbol) || 0;
+        return sum + (pos.type === 'put' ? Math.max(0, pos.strike - price) : Math.max(0, price - pos.strike)) * pos.qty;
+    }, 0);
+}
+function renderStats() {
+    document.getElementById('statCash').textContent = fmtMoney(state.cash);
+    const openVal = computeOpenValue(state.positions);
+    document.getElementById('statOpenVal').textContent = fmtMoney(openVal);
+    const realizedEl = document.getElementById('statRealized');
+    realizedEl.textContent = (state.realized >= 0 ? '+' : '') + fmtMoney(state.realized);
+    realizedEl.className = 'value ' + (state.realized > 0 ? 'up' : state.realized < 0 ? 'down' : '');
+    document.getElementById('statNet').textContent = fmtMoney(state.cash + openVal);
+}
+function renderAll() {
+    renderTicker();
+    renderPremiumPreview();
+    renderPositions();
+    renderAssets();
+    renderHistory();
+    renderStats();
+    renderChart();
+    renderEloTab();
+    renderBets();
+    renderMyWagers();
+    if (state.isAdmin) {
+        populateNameGroupSelect();
+        renderNameGroupsList();
+    }
+}
+function renderEloTab() {
+    const summaryEl = document.getElementById('eloSummary');
+    const bodyEl = document.getElementById('eloBody');
+    if (!summaryEl || !bodyEl)
+        return;
+    const entries = Object.keys(state.elo).map(name => Object.assign({ name }, state.elo[name]));
+    entries.sort((a, b) => b.elo - a.elo);
+    if (entries.length === 0) {
+        summaryEl.innerHTML = '';
+        bodyEl.innerHTML = '<tr><td colspan="6" class="empty-state">No battles recorded yet.</td></tr>';
+        if (eloChart) {
+            eloChart.destroy();
+            eloChart = null;
+        }
+        return;
+    }
+    const avg = entries.reduce((s, e) => s + e.elo, 0) / entries.length;
+    summaryEl.innerHTML =
+        '<div class="stat"><div class="label">PLAYERS TRACKED</div><div class="value">' + entries.length + '</div></div>'
+            + '<div class="stat"><div class="label">HIGHEST</div><div class="value elo-pos">' + escapeHtml(entries[0].name) + ' · ' + Math.round(entries[0].elo) + '</div></div>'
+            + '<div class="stat"><div class="label">LOWEST</div><div class="value elo-neg">' + escapeHtml(entries[entries.length - 1].name) + ' · ' + Math.round(entries[entries.length - 1].elo) + '</div></div>'
+            + '<div class="stat"><div class="label">AVERAGE</div><div class="value">' + Math.round(avg) + '</div></div>';
+    bodyEl.innerHTML = buildEloBodyHtml(entries);
+    renderEloChart(entries);
+}
+let expandedEloPlayer = null;
+function buildEloBodyHtml(entries) {
+    return entries.map((e, i) => {
+        const row = '<tr><td>' + (i + 1) + '</td><td class="sym player-link" data-player="' + escapeHtml(e.name) + '">' + escapeHtml(e.name) + '</td>'
+            + '<td><span class="cls-pill" style="color:' + classColor(e.profession) + '">' + escapeHtml(e.profession || 'Unknown') + '</span></td>'
+            + '<td class="' + (e.elo >= ELO_START ? 'elo-pos' : 'elo-neg') + '">' + Math.round(e.elo) + '</td>'
+            + '<td>' + (e.wins || 0) + '-' + (e.losses || 0) + '-' + (e.draws || 0) + '</td>'
+            + '<td>' + e.battles + '</td></tr>';
+        if (e.name !== expandedEloPlayer)
+            return row;
+        return row + '<tr class="class-expand-row"><td colspan="6">' + renderClassBreakdownHtml(e.name) + '</td></tr>';
+    }).join('');
+}
+function toggleEloPlayer(name) {
+    expandedEloPlayer = (expandedEloPlayer === name) ? null : name;
+    const bodyEl = document.getElementById('eloBody');
+    if (!bodyEl)
+        return;
+    const entries = Object.keys(state.elo).map(n => Object.assign({ name: n }, state.elo[n])).sort((a, b) => b.elo - a.elo);
+    bodyEl.innerHTML = buildEloBodyHtml(entries);
+    if (expandedEloPlayer) {
+        const row = bodyEl.querySelector('.class-expand-row');
+        if (row)
+            row.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+    }
+}
+let eloChart = null;
+function renderEloChart(entries) {
+    const canvas = document.getElementById('eloChart');
+    if (!canvas)
+        return;
+    const ctx = canvas.getContext('2d');
+    const sorted = [...entries].sort((a, b) => b.elo - a.elo);
+    const labels = sorted.map(e => e.name);
+    const data = sorted.map(e => Math.round(e.elo));
+    const colors = data.map(v => v >= ELO_START ? '#7fe6da' : '#ff6b5d');
+    if (eloChart)
+        eloChart.destroy();
+    eloChart = new Chart(ctx, {
+        type: 'bar',
+        data: { labels, datasets: [{ label: 'Elo', data, backgroundColor: colors }] },
+        options: {
+            responsive: true,
+            onClick: (evt, elements) => {
+                if (elements && elements.length) {
+                    const bar = sorted[elements[0].index];
+                    if (bar)
+                        toggleEloPlayer(bar.name);
+                }
+            },
+            onHover: (evt, elements) => { evt.native.target.style.cursor = elements.length ? 'pointer' : 'default'; },
+            plugins: { legend: { display: false } },
+            scales: {
+                x: { ticks: { color: '#93bdb9' }, grid: { color: '#2c4d4f' } },
+                y: { ticks: { color: '#93bdb9' }, grid: { color: '#2c4d4f' } }
+            }
+        }
+    });
+}
+function classesForPlayer(name) {
+    const p = state.players[name];
+    if (!p || !p.history || !p.history.length)
+        return null;
+    const groups = {};
+    let firstDay = Infinity, lastDay = -Infinity;
+    p.history.forEach(h => {
+        const raw = h.profession || 'Unknown';
+        const key = normProf(raw);
+        if (!groups[key])
+            groups[key] = { count: 0, labelCounts: {} };
+        groups[key].count += 1;
+        groups[key].labelCounts[raw] = (groups[key].labelCounts[raw] || 0) + 1;
+        if (h.day < firstDay)
+            firstDay = h.day;
+        if (h.day > lastDay)
+            lastDay = h.day;
+    });
+    const classes = Object.keys(groups).map(key => {
+        const g = groups[key];
+        const bestLabel = Object.keys(g.labelCounts).sort((a, b) => g.labelCounts[b] - g.labelCounts[a])[0];
+        return { cls: bestLabel, count: g.count };
+    }).sort((a, b) => b.count - a.count);
+    return { classes, battles: p.history.length, firstDay, lastDay };
+}
+function renderClassBreakdownHtml(name) {
+    const info = classesForPlayer(name);
+    if (!info || !info.classes.length) {
+        return '<div class="class-expand"><div class="empty-state">No report history found for this name.</div></div>';
+    }
+    const range = info.firstDay === info.lastDay ? ('Day ' + info.firstDay) : ('Day ' + info.firstDay + ' – Day ' + info.lastDay);
+    return '<div class="class-expand">'
+        + '<div class="class-expand-meta">' + info.battles + ' report' + (info.battles !== 1 ? 's' : '') + ' · ' + range
+        + (info.classes.length > 1 ? ' · ' + info.classes.length + ' classes played' : '') + '</div>'
+        + info.classes.map(c => '<div class="class-row"><span class="cls-pill" style="color:' + classColor(c.cls) + '">' + escapeHtml(c.cls) + '</span><span class="count">' + c.count + ' report' + (c.count !== 1 ? 's' : '') + '</span></div>').join('')
+        + '</div>';
+}
+let networthCache = null;
+const NETWORTH_CACHE_MS = 120000;
+async function renderNetworthTab(force) {
+    const summaryEl = document.getElementById('networthSummary');
+    const bodyEl = document.getElementById('networthBody');
+    if (!summaryEl || !bodyEl)
+        return;
+    if (!force && networthCache && (Date.now() - networthCache.fetchedAt) < NETWORTH_CACHE_MS) {
+        paintNetworthTab(networthCache.traders, networthCache.fetchedAt);
+        return;
+    }
+    bodyEl.innerHTML = '<tr><td colspan="6" class="empty-state">Loading traders…</td></tr>';
+    let snap;
+    try {
+        snap = await getDocs(collection(db, 'users'));
+    }
+    catch (e) {
+        bodyEl.innerHTML = '<tr><td colspan="6" class="empty-state">Could not load trader list.</td></tr>';
+        return;
+    }
+    const base = [];
+    snap.forEach(d => {
+        const u = d.data();
+        base.push({
+            uid: d.id,
+            username: u.username || '(unnamed)',
+            cash: typeof u.cash === 'number' ? u.cash : 0,
+            realized: typeof u.realized === 'number' ? u.realized : 0,
+            createdAt: u.createdAt
+        });
+    });
+    if (base.length === 0) {
+        summaryEl.innerHTML = '';
+        bodyEl.innerHTML = '<tr><td colspan="6" class="empty-state">No traders have signed up yet.</td></tr>';
+        return;
+    }
+    const traders = await Promise.all(base.map(async (t) => {
+        let openVal = 0;
+        try {
+            const posSnap = await getDocs(collection(db, 'users', t.uid, 'positions'));
+            const positions = [];
+            posSnap.forEach(p => positions.push(p.data()));
+            openVal = computeOpenValue(positions);
+        }
+        catch (e) {
+        }
+        return Object.assign({}, t, { openVal, netWorth: t.cash + openVal });
+    }));
+    traders.sort((a, b) => b.netWorth - a.netWorth);
+    networthCache = { traders, fetchedAt: Date.now() };
+    paintNetworthTab(traders, networthCache.fetchedAt);
+}
+function paintNetworthTab(traders, fetchedAt) {
+    const summaryEl = document.getElementById('networthSummary');
+    const bodyEl = document.getElementById('networthBody');
+    const totalNet = traders.reduce((s, t) => s + t.netWorth, 0);
+    const avgNet = totalNet / traders.length;
+    const ageLabel = relativeTime(fetchedAt).replace('in ', '').replace(' ago', '') + ' ago';
+    summaryEl.innerHTML =
+        '<div class="stat"><div class="label">TRADERS</div><div class="value">' + traders.length + '</div></div>'
+            + '<div class="stat"><div class="label">RICHEST</div><div class="value elo-pos">' + escapeHtml(traders[0].username) + ' · ' + fmtMoney(traders[0].netWorth) + '</div></div>'
+            + '<div class="stat"><div class="label">POOREST</div><div class="value elo-neg">' + escapeHtml(traders[traders.length - 1].username) + ' · ' + fmtMoney(traders[traders.length - 1].netWorth) + '</div></div>'
+            + '<div class="stat"><div class="label">AVERAGE NET WORTH</div><div class="value">' + fmtMoney(avgNet) + '</div></div>'
+            + '<div class="stat"><div class="label">UPDATED</div><div class="value" style="font-weight:normal;">' + ageLabel + ' · <a href="#" id="networthRefreshLink" style="color:var(--phosphor);">refresh</a></div></div>';
+    const refreshLink = document.getElementById('networthRefreshLink');
+    if (refreshLink)
+        refreshLink.addEventListener('click', (e) => { e.preventDefault(); renderNetworthTab(true); });
+    bodyEl.innerHTML = traders.map((t, i) => {
+        const isYou = t.uid === state.uid;
+        return '<tr' + (isYou ? ' style="background:var(--panel-2); font-weight:bold;"' : '') + '>'
+            + '<td>' + (i + 1) + '</td>'
+            + '<td class="sym">' + escapeHtml(t.username) + (isYou ? ' <span style="color:var(--text-dim); font-weight:normal;">(you)</span>' : '') + '</td>'
+            + '<td>' + fmtMoney(t.cash) + '</td>'
+            + '<td>' + fmtMoney(t.openVal) + '</td>'
+            + '<td>' + fmtMoney(t.netWorth) + '</td>'
+            + '<td class="' + (t.realized >= 0 ? 'win-text' : 'loss-text') + '">' + (t.realized >= 0 ? '+' : '') + fmtMoney(t.realized) + '</td>'
+            + '</tr>';
+    }).join('');
+}
+const imageDropzone = document.getElementById('imageDropzone');
+const imageInput = document.getElementById('imageInput');
+const ocrStatus = document.getElementById('ocrStatus');
+const ocrProgress = document.getElementById('ocrProgress');
+const ocrProgressBar = document.getElementById('ocrProgressBar');
+const downloadConvertedHtml = document.getElementById('downloadConvertedHtml');
+const uploadConvertedHtml = document.getElementById('uploadConvertedHtml');
+let convertedReportHtml = '';
+let convertedReportFile = null;
+function setOcrStatus(message, type = '') {
+    ocrStatus.className = 'ocr-status' + (type ? ' ' + type : '');
+    ocrStatus.textContent = message;
+}
+function htmlEscape(value) {
+    return String(value ?? '')
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;');
+}
+function cleanOcrNumber(value) {
+    const cleaned = String(value ?? '').replace(/[\s,]/g, '').replace(/[Oo]/g, '0').replace(/[Il]/g, '1');
+    const n = parseFloat(cleaned.replace(/[^0-9.-]/g, ''));
+    return Number.isFinite(n) ? n : 0;
+}
+function factionColor(faction) {
+    return /imperial|blue/i.test(faction) ? '#4169E1' :
+        /rebel|red/i.test(faction) ? '#D93311' : '#FFFFFF';
+}
+function buildStandardBattleReportHtml(players, title = 'BATTLEFIELD OVER', extraColumnLabels = []) {
+    const headers = [
+        'Name', 'Profession', 'Faction', 'Kills', 'Assists', 'Deaths', 'Damage',
+        'Largest Performed Hit', 'Damage Taken', 'Healing', 'Largest Heal', 'Captures',
+        ...extraColumnLabels
+    ];
+    const rows = players.map((p, index) => {
+        const bg = index % 2 === 0 ? '#FFFFFF' : '#CCCCCC';
+        const fc = factionColor(p.faction);
+        const extraCells = extraColumnLabels
+            .map(label => `<td bgcolor="${bg}">${cleanOcrNumber((p.extra || {})[label])}</td>`)
+            .join('\n');
+        return `<tr>
+<td bgcolor="${bg}"><font color="${fc}">${htmlEscape(p.name)}</font></td>
+<td bgcolor="${bg}">${htmlEscape(p.profession)}</td>
+<td bgcolor="${bg}"><font color="${fc}">${htmlEscape(p.faction)}</font></td>
+<td bgcolor="${bg}">${cleanOcrNumber(p.kills)}</td>
+<td bgcolor="${bg}">${cleanOcrNumber(p.assists)}</td>
+<td bgcolor="${bg}">${cleanOcrNumber(p.deaths)}</td>
+<td bgcolor="${bg}">${cleanOcrNumber(p.damage)}</td>
+<td bgcolor="${bg}">${cleanOcrNumber(p.largestHit)}</td>
+<td bgcolor="${bg}">${cleanOcrNumber(p.damageTaken)}</td>
+<td bgcolor="${bg}">${cleanOcrNumber(p.healing)}</td>
+<td bgcolor="${bg}">${cleanOcrNumber(p.largestHeal)}</td>
+<td bgcolor="${bg}">${cleanOcrNumber(p.captures)}</td>
+${extraCells}
+</tr>`;
+    }).join('\n');
+    return `<!DOCTYPE html>
+<html>
+<head>
+<title>${htmlEscape(title)}</title>
+</head>
+<body><center>
+<table border="1">
+<tr>
+${headers.map(h => `<th>${htmlEscape(h)}</th>`).join('\n')}
+</tr>
+${rows}
+</table>
+</center></body>
+</html>`;
+}
+const OCR_NUMERIC_WHITELIST = '0123456789';
+const OCR_TEXT_WHITELIST = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789'- ";
+const HEADER_FIELD_MAP = {
+    'name': 'name',
+    'profession': 'profession',
+    'faction': 'faction',
+    'kills': 'kills',
+    'assists': 'assists',
+    'deaths': 'deaths',
+    'damage': 'damage',
+    'largestperformedhit': 'largestHit',
+    'damagetaken': 'damageTaken',
+    'healing': 'healing',
+    'largestheal': 'largestHeal',
+    'captures': 'captures'
+};
+const TEXT_FIELDS = new Set(['name', 'profession', 'faction']);
+function normalizeHeaderLabel(text) {
+    return String(text || '').toLowerCase().replace(/[^a-z]/g, '');
+}
+function loadImageToCanvas(file) {
+    return new Promise((resolve, reject) => {
+        const img = new Image();
+        img.onload = () => {
+            const canvas = document.createElement('canvas');
+            canvas.width = img.naturalWidth;
+            canvas.height = img.naturalHeight;
+            canvas.getContext('2d').drawImage(img, 0, 0);
+            URL.revokeObjectURL(img.src);
+            resolve(canvas);
+        };
+        img.onerror = () => { URL.revokeObjectURL(img.src); reject(new Error('Could not load the image file.')); };
+        img.src = URL.createObjectURL(file);
+    });
+}
+function groupIndices(indices, gap) {
+    const groups = [];
+    let cur = [indices[0]];
+    for (let i = 1; i < indices.length; i++) {
+        if (indices[i] - cur[cur.length - 1] <= gap) {
+            cur.push(indices[i]);
+        }
+        else {
+            groups.push(cur);
+            cur = [indices[i]];
+        }
+    }
+    groups.push(cur);
+    return groups.map(g => g.reduce((a, b) => a + b, 0) / g.length);
+}
+function detectTableGrid(canvas) {
+    const w = canvas.width, h = canvas.height;
+    const { data } = canvas.getContext('2d').getImageData(0, 0, w, h);
+    const colGrayCount = new Float64Array(w);
+    const rowGrayCount = new Float64Array(h);
+    for (let y = 0; y < h; y++) {
+        const rowBase = y * w * 4;
+        for (let x = 0; x < w; x++) {
+            const i = rowBase + x * 4;
+            const r = data[i], g = data[i + 1], b = data[i + 2];
+            if (Math.abs(r - g) < 10 && Math.abs(g - b) < 10 && r < 200) {
+                colGrayCount[x]++;
+                rowGrayCount[y]++;
+            }
+        }
+    }
+    const colIdx = [];
+    for (let x = 0; x < w; x++)
+        if (colGrayCount[x] / h > 0.8)
+            colIdx.push(x);
+    const rowIdx = [];
+    for (let y = 0; y < h; y++)
+        if (rowGrayCount[y] / w > 0.85)
+            rowIdx.push(y);
+    if (!colIdx.length || !rowIdx.length) {
+        throw new Error('Could not detect a gridded table in this image. Use a screenshot of the full bordered battle-report table.');
+    }
+    const cols = groupIndices(colIdx, 4);
+    const rows = groupIndices(rowIdx, 4);
+    if (cols[0] > 10)
+        cols.unshift(0);
+    if (cols[cols.length - 1] < w - 10)
+        cols.push(w - 1);
+    if (rows[0] > 10)
+        rows.unshift(0);
+    if (rows[rows.length - 1] < h - 10)
+        rows.push(h - 1);
+    return { cols, rows };
+}
+function invertIfDarkBackground(canvas) {
+    const ctx = canvas.getContext('2d');
+    const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+    const data = imageData.data;
+    let total = 0;
+    for (let i = 0; i < data.length; i += 4) {
+        total += (data[i] + data[i + 1] + data[i + 2]) / 3;
+    }
+    const avgBrightness = total / (data.length / 4);
+    if (avgBrightness < 128) {
+        for (let i = 0; i < data.length; i += 4) {
+            data[i] = 255 - data[i];
+            data[i + 1] = 255 - data[i + 1];
+            data[i + 2] = 255 - data[i + 2];
+        }
+        ctx.putImageData(imageData, 0, 0);
+    }
+    return canvas;
+}
+function cropCellCanvas(sourceCanvas, x0, x1, y0, y1, { scale = 4, tight = false } = {}) {
+    if (!tight) {
+        const inset = 3;
+        const sx = Math.round(x0) + inset;
+        const sy = Math.round(y0) + inset;
+        const sw = Math.round(x1) - Math.round(x0) - inset * 2;
+        const sh = Math.round(y1) - Math.round(y0) - inset * 2;
+        if (sw <= 0 || sh <= 0)
+            return null;
+        const out = document.createElement('canvas');
+        out.width = sw * scale;
+        out.height = sh * scale;
+        const ctx = out.getContext('2d');
+        ctx.imageSmoothingEnabled = true;
+        ctx.imageSmoothingQuality = 'high';
+        ctx.fillStyle = '#fff';
+        ctx.fillRect(0, 0, out.width, out.height);
+        ctx.drawImage(sourceCanvas, sx, sy, sw, sh, 0, 0, out.width, out.height);
+        return invertIfDarkBackground(out);
+    }
+    const inset = 1;
+    const sx = Math.round(x0) + inset;
+    const sy = Math.round(y0) + inset;
+    const sw = Math.round(x1) - Math.round(x0) - inset * 2;
+    const sh = Math.round(y1) - Math.round(y0) - inset * 2;
+    if (sw <= 0 || sh <= 0)
+        return null;
+    const raw = document.createElement('canvas');
+    raw.width = sw;
+    raw.height = sh;
+    const rawCtx = raw.getContext('2d');
+    rawCtx.drawImage(sourceCanvas, sx, sy, sw, sh, 0, 0, sw, sh);
+    const { data } = rawCtx.getImageData(0, 0, sw, sh);
+    const borderSkip = Math.min(2, Math.floor(Math.min(sw, sh) / 4));
+    let minX = sw, maxX = -1, minY = sh, maxY = -1;
+    for (let y = borderSkip; y < sh - borderSkip; y++) {
+        for (let x = borderSkip; x < sw - borderSkip; x++) {
+            const i = (y * sw + x) * 4;
+            const brightness = (data[i] + data[i + 1] + data[i + 2]) / 3;
+            if (brightness < 150) {
+                if (x < minX)
+                    minX = x;
+                if (x > maxX)
+                    maxX = x;
+                if (y < minY)
+                    minY = y;
+                if (y > maxY)
+                    maxY = y;
+            }
+        }
+    }
+    const pad = 4;
+    const foundInk = maxX >= minX;
+    const cx0 = foundInk ? Math.max(0, minX - pad) : 0;
+    const cx1 = foundInk ? Math.min(sw, maxX + pad + 1) : sw;
+    const cy0 = foundInk ? Math.max(0, minY - pad) : 0;
+    const cy1 = foundInk ? Math.min(sh, maxY + pad + 1) : sh;
+    const cw = cx1 - cx0, ch = cy1 - cy0;
+    if (cw <= 0 || ch <= 0)
+        return null;
+    const out = document.createElement('canvas');
+    out.width = cw * scale;
+    out.height = ch * scale;
+    const ctx = out.getContext('2d');
+    ctx.imageSmoothingEnabled = true;
+    ctx.imageSmoothingQuality = 'high';
+    ctx.fillStyle = '#fff';
+    ctx.fillRect(0, 0, out.width, out.height);
+    ctx.drawImage(raw, cx0, cy0, cw, ch, 0, 0, out.width, out.height);
+    return invertIfDarkBackground(out);
+}
+function cellHasInk(cellCanvas) {
+    const ctx = cellCanvas.getContext('2d');
+    const { data } = ctx.getImageData(0, 0, cellCanvas.width, cellCanvas.height);
+    let darkPixels = 0;
+    const totalPixels = cellCanvas.width * cellCanvas.height;
+    for (let i = 0; i < data.length; i += 4) {
+        if (data[i] < 200 || data[i + 1] < 200 || data[i + 2] < 200)
+            darkPixels++;
+    }
+    return (darkPixels / totalPixels) > 0.01;
+}
+async function ocrNumericCell(worker, cellCanvas) {
+    if (!cellCanvas)
+        return '0';
+    for (const psm of ['6', '7', '8']) {
+        await worker.setParameters({ tessedit_pageseg_mode: psm, tessedit_char_whitelist: OCR_NUMERIC_WHITELIST });
+        const { data } = await worker.recognize(cellCanvas);
+        const digits = (data.text || '').replace(/[^0-9]/g, '');
+        if (digits !== '')
+            return digits;
+    }
+    if (cellHasInk(cellCanvas))
+        return null;
+    return '0';
+}
+async function ocrTextCell(worker, cellCanvas) {
+    if (!cellCanvas)
+        return '';
+    for (const psm of ['6', '7', '13']) {
+        await worker.setParameters({ tessedit_pageseg_mode: psm, tessedit_char_whitelist: OCR_TEXT_WHITELIST });
+        const { data } = await worker.recognize(cellCanvas);
+        const txt = (data.text || '').replace(/\s+/g, ' ').trim();
+        if (txt !== '')
+            return txt;
+    }
+    return '';
+}
+class OcrRequiredCellError extends Error {
+    constructor(rowNumber, fieldLabel) {
+        super(`Could not read the "${fieldLabel}" cell in data row ${rowNumber} of the table - OCR returned no trustworthy value for it after every retry. Refusing to guess a placeholder; please retry with a sharper/higher-resolution screenshot (or crop tighter around the table) and re-convert.`);
+        this.name = 'OcrRequiredCellError';
+    }
+}
+async function parseBattleReportFromGrid(canvas, workerPool, onProgress) {
+    const { cols, rows } = detectTableGrid(canvas);
+    const nCols = cols.length - 1;
+    const nRows = rows.length - 1;
+    if (nCols < 4 || nRows < 2) {
+        throw new Error('Could not detect a gridded table with enough columns and rows in this image.');
+    }
+    const fieldForColumn = new Array(nCols).fill(null);
+    const rawHeaderForColumn = new Array(nCols).fill('');
+    for (let c = 0; c < nCols; c++) {
+        const cell = cropCellCanvas(canvas, cols[c], cols[c + 1], rows[0], rows[1]);
+        const label = await ocrTextCell(workerPool[0], cell);
+        rawHeaderForColumn[c] = label;
+        fieldForColumn[c] = HEADER_FIELD_MAP[normalizeHeaderLabel(label)] || null;
+    }
+    const foundFields = new Set(fieldForColumn.filter(Boolean));
+    if (!foundFields.has('name') || foundFields.size < 6) {
+        throw new Error('Could not recognize the battle-report column headers in this image. Use a clear screenshot containing the full table.');
+    }
+    const extraColumnLabels = [];
+    fieldForColumn.forEach((f, c) => {
+        if (!f)
+            extraColumnLabels.push(rawHeaderForColumn[c] || `Column ${c + 1}`);
+    });
+    const tasks = [];
+    for (let r = 1; r < nRows; r++) {
+        for (let c = 0; c < nCols; c++)
+            tasks.push({ r, c });
+    }
+    const results = new Array(tasks.length);
+    const totalCells = tasks.length;
+    let done = 0;
+    let nextTask = 0;
+    async function runWorker(worker) {
+        while (true) {
+            const taskIdx = nextTask++;
+            if (taskIdx >= tasks.length)
+                return;
+            const { r, c } = tasks[taskIdx];
+            const field = fieldForColumn[c];
+            const isText = field ? TEXT_FIELDS.has(field) : false;
+            const cell = cropCellCanvas(canvas, cols[c], cols[c + 1], rows[r], rows[r + 1], { tight: !isText });
+            const value = isText ? await ocrTextCell(worker, cell) : await ocrNumericCell(worker, cell);
+            if (isText && value === '') {
+                throw new OcrRequiredCellError(r, rawHeaderForColumn[c] || field);
+            }
+            if (!isText && value === null) {
+                throw new OcrRequiredCellError(r, rawHeaderForColumn[c] || field || `Column ${c + 1}`);
+            }
+            results[taskIdx] = value;
+            done++;
+            if (onProgress)
+                onProgress(done, totalCells);
+        }
+    }
+    await Promise.all(workerPool.map(w => runWorker(w)));
+    const players = [];
+    for (let r = 1; r < nRows; r++) {
+        const rowVals = {};
+        const extra = {};
+        for (let c = 0; c < nCols; c++) {
+            const value = results[(r - 1) * nCols + c];
+            const field = fieldForColumn[c];
+            if (field)
+                rowVals[field] = value;
+            else
+                extra[rawHeaderForColumn[c] || `Column ${c + 1}`] = value;
+        }
+        if (!rowVals.name)
+            continue;
+        if (/^name$/i.test(rowVals.name) || /^profession$/i.test(rowVals.name))
+            continue;
+        if (!rowVals.profession)
+            throw new OcrRequiredCellError(r, 'Profession');
+        if (!rowVals.faction)
+            throw new OcrRequiredCellError(r, 'Faction');
+        players.push({
+            name: rowVals.name,
+            profession: rowVals.profession,
+            faction: rowVals.faction,
+            kills: cleanOcrNumber(rowVals.kills),
+            assists: cleanOcrNumber(rowVals.assists),
+            deaths: cleanOcrNumber(rowVals.deaths),
+            damage: cleanOcrNumber(rowVals.damage),
+            largestHit: cleanOcrNumber(rowVals.largestHit),
+            damageTaken: cleanOcrNumber(rowVals.damageTaken),
+            healing: cleanOcrNumber(rowVals.healing),
+            largestHeal: cleanOcrNumber(rowVals.largestHeal),
+            captures: cleanOcrNumber(rowVals.captures),
+            extra
+        });
+    }
+    if (!players.length)
+        throw new Error('Detected the table grid but could not extract any player rows.');
+    return { players, extraColumnLabels: [...new Set(extraColumnLabels)] };
+}
+async function convertImageToBattleHtml(file) {
+    if (!window.Tesseract)
+        throw new Error('OCR engine could not be loaded. Check your internet connection and reload the page.');
+    ocrProgress.style.display = 'block';
+    ocrProgressBar.style.width = '0%';
+    setOcrStatus('Loading OCR engine…');
+    const POOL_SIZE = 4;
+    const workerPool = [];
+    try {
+        for (let i = 0; i < POOL_SIZE; i++) {
+            workerPool.push(await Tesseract.createWorker('eng', 1));
+        }
+        setOcrStatus('Detecting table structure…');
+        const canvas = await loadImageToCanvas(file);
+        const { players, extraColumnLabels } = await parseBattleReportFromGrid(canvas, workerPool, (done, total) => {
+            ocrProgressBar.style.width = Math.round((done / total) * 100) + '%';
+            setOcrStatus(`Reading battle-report cells… ${done}/${total}`);
+        });
+        convertedReportHtml = buildStandardBattleReportHtml(players, 'BATTLEFIELD OVER', extraColumnLabels);
+        convertedReportFile = new File([convertedReportHtml], (file.name.replace(/\.[^.]+$/, '') || 'BATTLEFIELD_OVER') + '.html', { type: 'text/html' });
+        downloadConvertedHtml.disabled = false;
+        uploadConvertedHtml.disabled = false;
+        setOcrStatus(`Converted ${players.length} player${players.length === 1 ? '' : 's'} to standard BATTLEFIELD_OVER.html format.`, 'ok');
+        return convertedReportFile;
+    }
+    finally {
+        await Promise.all(workerPool.map(w => w.terminate()));
+        ocrProgress.style.display = 'none';
+    }
+}
+async function handleImageFile(file) {
+    if (!file || !file.type.startsWith('image/')) {
+        setOcrStatus('Please select an image file.', 'err');
+        return;
+    }
+    downloadConvertedHtml.disabled = true;
+    uploadConvertedHtml.disabled = true;
+    convertedReportHtml = '';
+    convertedReportFile = null;
+    try {
+        await convertImageToBattleHtml(file);
+    }
+    catch (err) {
+        setOcrStatus('Conversion failed: ' + (err.message || err), 'err');
+    }
+}
+imageDropzone.addEventListener('click', () => imageInput.click());
+imageInput.addEventListener('change', async (e) => {
+    await handleImageFile(e.target.files[0]);
+    imageInput.value = '';
+});
+['dragover', 'dragenter'].forEach(evt => imageDropzone.addEventListener(evt, e => {
+    e.preventDefault();
+    imageDropzone.classList.add('drag');
+}));
+['dragleave', 'drop'].forEach(evt => imageDropzone.addEventListener(evt, e => {
+    e.preventDefault();
+    imageDropzone.classList.remove('drag');
+}));
+imageDropzone.addEventListener('drop', async (e) => {
+    const file = e.dataTransfer.files[0];
+    await handleImageFile(file);
+});
+downloadConvertedHtml.addEventListener('click', () => {
+    if (!convertedReportHtml)
+        return;
+    const blob = new Blob([convertedReportHtml], { type: 'text/html' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = convertedReportFile?.name || 'BATTLEFIELD_OVER.html';
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(url);
+});
+uploadConvertedHtml.addEventListener('click', async () => {
+    if (!convertedReportFile)
+        return;
+    uploadConvertedHtml.disabled = true;
+    setOcrStatus('Uploading converted report to the shared market…');
+    const result = await handleUpload(convertedReportFile);
+    uploadConvertedHtml.disabled = false;
+    setOcrStatus(result.message, result.ok ? 'ok' : 'err');
+});
+const dropzone = document.getElementById('dropzone');
+const fileInput = document.getElementById('fileInput');
+dropzone.addEventListener('click', () => fileInput.click());
+async function handleUploadBatch(fileList) {
+    const files = Array.from(fileList || []).filter(f => /\.html?$/i.test(f.name));
+    if (!files.length)
+        return;
+    for (const file of files)
+        await handleUpload(file);
+}
+fileInput.addEventListener('change', async (e) => { await handleUploadBatch(e.target.files); fileInput.value = ''; });
+['dragover', 'dragenter'].forEach(evt => dropzone.addEventListener(evt, e => { e.preventDefault(); dropzone.classList.add('drag'); }));
+['dragleave', 'drop'].forEach(evt => dropzone.addEventListener(evt, e => { e.preventDefault(); dropzone.classList.remove('drag'); }));
+dropzone.addEventListener('drop', async (e) => { await handleUploadBatch(e.dataTransfer.files); });
+document.getElementById('optSymbol').addEventListener('change', () => { updateStrikeChain(); renderPremiumPreview(); });
+['optExpiry', 'optQty', 'swapThreshold', 'swapNotional'].forEach(id => document.getElementById(id).addEventListener('input', renderPremiumPreview));
+document.getElementById('optStrikeSelect').addEventListener('change', () => {
+    const sel = document.getElementById('optStrikeSelect');
+    const customField = document.getElementById('optStrikeCustomField');
+    if (sel.value === 'custom') {
+        customField.classList.remove('hidden');
+        document.getElementById('optStrike').value = document.getElementById('optStrikeCustom').value || '';
+    }
+    else {
+        customField.classList.add('hidden');
+        document.getElementById('optStrike').value = sel.value;
+    }
+    renderPremiumPreview();
+});
+document.getElementById('optStrikeCustom').addEventListener('input', () => {
+    document.getElementById('optStrike').value = document.getElementById('optStrikeCustom').value;
+    renderPremiumPreview();
+});
+const navFloor = document.getElementById('navFloor'), navAssets = document.getElementById('navAssets'), navHistory = document.getElementById('navHistory'), navElo = document.getElementById('navElo'), navNetworth = document.getElementById('navNetworth'), navWagers = document.getElementById('navWagers');
+const viewFloor = document.getElementById('viewTradingFloor'), viewAssets = document.getElementById('viewAssets'), viewHistory = document.getElementById('viewHistory'), viewElo = document.getElementById('viewElo'), viewNetworth = document.getElementById('viewNetworth'), viewWagers = document.getElementById('viewWagers');
+function activateNav(activeNav, activeView) {
+    [navFloor, navAssets, navHistory, navElo, navNetworth, navWagers].forEach(b => b.classList.remove('active'));
+    [viewFloor, viewAssets, viewHistory, viewElo, viewNetworth, viewWagers].forEach(v => v.classList.add('hidden'));
+    activeNav.classList.add('active');
+    activeView.classList.remove('hidden');
+}
+navFloor.addEventListener('click', () => activateNav(navFloor, viewFloor));
+navAssets.addEventListener('click', () => { activateNav(navAssets, viewAssets); renderAssets(); });
+navHistory.addEventListener('click', () => { activateNav(navHistory, viewHistory); renderHistory(); });
+navElo.addEventListener('click', () => { activateNav(navElo, viewElo); renderEloTab(); });
+navNetworth.addEventListener('click', () => { activateNav(navNetworth, viewNetworth); renderNetworthTab(); });
+let betsSubscribed = false;
+navWagers.addEventListener('click', () => {
+    activateNav(navWagers, viewWagers);
+    if (!betsSubscribed) {
+        betsSubscribed = true;
+        subscribeToBets();
+        subscribeToMyWagers(state.uid);
+    }
+    renderBets();
+    renderMyWagers();
+});
+document.getElementById('assetSymbol').addEventListener('change', e => { state.assetSymbol = e.target.value; renderAssetPreview(); });
+document.getElementById('assetQty').addEventListener('input', renderAssetPreview);
+document.getElementById('assetBuyBtn').addEventListener('click', buyStock);
+document.getElementById('tickerSearch').addEventListener('input', e => {
+    state.tickerSearch = e.target.value;
+    renderTicker();
+});
+document.getElementById('historyFilters').querySelectorAll('button').forEach(btn => btn.addEventListener('click', () => {
+    state.historyFilter = btn.dataset.filter;
+    document.getElementById('historyFilters').querySelectorAll('button').forEach(b => b.classList.remove('active'));
+    btn.classList.add('active');
+    renderHistory();
+}));
+document.getElementById('eloBody').addEventListener('click', e => {
+    const link = e.target.closest('.player-link');
+    if (link)
+        toggleEloPlayer(link.dataset.player);
+});
+</script>
+</body>
+</html>
