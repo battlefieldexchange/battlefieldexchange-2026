@@ -2360,16 +2360,25 @@ async function closePositionEarly(posId) {
     const pos = state.positions.find(p => p.id === posId);
     if (!pos || pos.status !== 'open' || pos.type === 'stock')
         return;
-    if (!confirm('Close this position now and lock in its current value?'))
+    if (!confirm('Sell this position now at its current fair value?'))
         return;
-    const price = currentPrice(pos.symbol) ?? 0;
+    const remaining = Math.max(1, pos.expiryDay - state.day);
     let payoff;
     if (pos.type === 'swap') {
-        const remaining = Math.max(1, pos.expiryDay - state.day);
         payoff = computeSwapPremium(pos.symbol, pos.threshold, pos.notional, remaining).premium * pos.qty;
     }
     else {
-        payoff = (pos.type === 'put' ? Math.max(0, pos.strike - price) : Math.max(0, price - pos.strike)) * pos.qty;
+        // Full current premium (intrinsic + whatever time value is left),
+        // same formula buying uses -- NOT intrinsic value alone. Intrinsic
+        // -only treats "sell early" as "force-expire this instant",
+        // which throws away every cent of real time value still on the
+        // contract even one day after buying it.
+        const calc = computeOptionPremium(pos.symbol, pos.strike, remaining, pos.type === 'put');
+        if (!calc) {
+            alert('No price data for that stock right now.');
+            return;
+        }
+        payoff = calc.premium * pos.qty;
     }
     payoff = Math.round(payoff * 100) / 100;
     const realizedDelta = payoff - pos.premium * pos.qty;
@@ -2377,7 +2386,7 @@ async function closePositionEarly(posId) {
         const posRef = doc(db, 'users', state.uid, 'positions', pos.id);
         const userRef = doc(db, 'users', state.uid);
         const batch = writeBatch(db);
-        batch.update(posRef, { status: payoff > 0 ? 'won' : 'lost', settlePrice: price, payoff, closedEarly: true, cashDelta: payoff, realizedDelta });
+        batch.update(posRef, { status: payoff > 0 ? 'won' : 'lost', settlePrice: currentPrice(pos.symbol) ?? 0, payoff, closedEarly: true, cashDelta: payoff, realizedDelta });
         batch.update(userRef, { cash: state.cash + payoff, realized: state.realized + realizedDelta, lastTradeId: pos.id });
         await batch.commit();
     }
@@ -2682,17 +2691,28 @@ async function sellStock(symbol, sellQty) {
             if (sellQty > posData.qty)
                 throw new Error('You only own ' + posData.qty + ' share' + (posData.qty === 1 ? '' : 's') + ' of ' + symbol + '.');
             const proceeds = Math.round(price * sellQty * 100) / 100;
+            // rawProceeds (NOT proceeds) is what actually gets written as
+            // cashDelta and as the cash delta below. The rule re-derives
+            // the expected cashDelta itself as canonicalPrice(symbol) x
+            // qtyChange, with no rounding -- and price*sellQty in raw
+            // floating point essentially never lands on exactly the same
+            // value as Math.round(price*sellQty*100)/100 (e.g. 33.33*3
+            // is 99.98999999999999, not 99.99). Sending the rounded
+            // number made the rule's exact-equality check fail on nearly
+            // every sell. `proceeds` (rounded) is kept only for the
+            // realized-P&L math and doesn't need to match anything.
+            const rawProceeds = price * sellQty;
             const pnl = Math.round((price - Number(posData.avgCost || 0)) * sellQty * 100) / 100;
             const remaining = posData.qty - sellQty;
             if (remaining > 0) {
-                tx.update(posRef, { qty: remaining, lastSellPrice: price, lastSellDay: state.day, cashDelta: proceeds, realizedDelta: pnl });
+                tx.update(posRef, { qty: remaining, lastSellPrice: price, lastSellDay: state.day, cashDelta: rawProceeds, realizedDelta: pnl });
             }
             else {
-                tx.update(posRef, { qty: 0, status: 'sold', sellPrice: price, sellDay: state.day, payoff: proceeds, realizedPnl: pnl, dismissed: false, cashDelta: proceeds, realizedDelta: pnl });
+                tx.update(posRef, { qty: 0, status: 'sold', sellPrice: price, sellDay: state.day, payoff: proceeds, realizedPnl: pnl, dismissed: false, cashDelta: rawProceeds, realizedDelta: pnl });
             }
             const userSnap = await tx.get(userRef);
             const userData = userSnap.data();
-            tx.update(userRef, { cash: userData.cash + proceeds, realized: userData.realized + pnl, lastTradeId: posRef.id });
+            tx.update(userRef, { cash: userData.cash + rawProceeds, realized: userData.realized + pnl, lastTradeId: posRef.id });
         });
         renderAssets();
         renderStats();
@@ -2782,7 +2802,7 @@ function renderPositionCard(pos) {
             + '<div class="detail"><span>Premium paid</span><b>' + fmtMoney(pos.premium * pos.qty) + '</b></div>'
             + (pos.type !== 'swap' ? ('<div class="detail"><span>Mark-to-market</span><b>' + fmtMoney(markValue) + '</b></div>') : '')
             + '<div class="detail"><span>Close now for</span><b>' + fmtMoney(closeValue) + '</b></div>'
-            + '<div style="margin-top:8px; text-align:right;"><button class="close-btn" data-closeid="' + pos.id + '">Close position</button></div>'
+            + '<div style="margin-top:8px; text-align:right;"><button class="close-btn" data-closeid="' + pos.id + '">Sell</button></div>'
             + '</div>';
     }
     else {
