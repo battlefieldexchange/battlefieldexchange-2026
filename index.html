@@ -2690,6 +2690,15 @@ async function sellStock(symbol, sellQty) {
             const posData = posSnap.data();
             if (sellQty > posData.qty)
                 throw new Error('You only own ' + posData.qty + ' share' + (posData.qty === 1 ? '' : 's') + ' of ' + symbol + '.');
+            // Read BEFORE any writes -- Firestore transactions require every
+            // tx.get() to happen before the first tx.set()/update()/delete(),
+            // in this callback specifically (not just "eventually"). This
+            // used to be read AFTER the tx.update(posRef, ...) calls below,
+            // which the SDK rejects immediately, client-side, before the
+            // transaction ever reaches the server -- so it failed the same
+            // way for every sell, no matter what the rules said.
+            const userSnap = await tx.get(userRef);
+            const userData = userSnap.data();
             const proceeds = Math.round(price * sellQty * 100) / 100;
             // rawProceeds (NOT proceeds) is what actually gets written as
             // cashDelta and as the cash delta below. The rule re-derives
@@ -2710,8 +2719,6 @@ async function sellStock(symbol, sellQty) {
             else {
                 tx.update(posRef, { qty: 0, status: 'sold', sellPrice: price, sellDay: state.day, payoff: proceeds, realizedPnl: pnl, dismissed: false, cashDelta: rawProceeds, realizedDelta: pnl });
             }
-            const userSnap = await tx.get(userRef);
-            const userData = userSnap.data();
             tx.update(userRef, { cash: userData.cash + rawProceeds, realized: userData.realized + pnl, lastTradeId: posRef.id });
         });
         renderAssets();
