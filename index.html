@@ -389,8 +389,8 @@
           </div>
           <div class="admin-note" style="margin-top:16px;">Price scale — changing these and hitting Recalculate reprices every stock for <b>every connected trader</b> immediately. Stock price is a direct read of each player's current Elo <b>rank</b> that day (see the Elo Distribution tab) — no day-over-day compounding, no separate weight set to tune. The middle-ranked player prices at "Median"; the single top-ranked player's price approaches (but never quite reaches) "Top price" as more players are tracked. Because this is rank-based, not raw-Elo-based, it can't blow up no matter how large the actual Elo gap between players gets. Only visible/editable here, admin-only server-side too.</div>
           <div class="weight-row"><label>Median price</label><input type="number" step="1" id="pMedian" style="width:100%"><span></span></div>
-          <div class="weight-row"><label>Reference top price (curve continues past this — not a cap)</label><input type="number" step="1" id="pTop" style="width:100%"><span></span></div>
-          <div class="weight-row"><label>Std. deviations where growth goes from exponential to linear</label><input type="number" step="0.1" min="0.5" id="pSpread" style="width:100%"><span></span></div>
+          <div class="weight-row"><label>Reference top price (at `spread` std-devs above average — not a cap)</label><input type="number" step="1" id="pTop" style="width:100%"><span></span></div>
+          <div class="weight-row"><label>Spread — std. deviations of edge from median price to top price</label><input type="number" step="0.1" min="0.5" id="pSpread" style="width:100%"><span></span></div>
           <button class="debug-btn" id="dbgRecalc">Recalculate &amp; broadcast to all clients</button>
           <div class="msg" id="wMsg"></div>
           <div class="debug-inline" style="margin-top:10px;">
@@ -701,29 +701,26 @@ function canonicalName(name) {
 // effectively a ceiling, and climbing further did nothing to price because
 // there's no rank above #1 to move into.
 //
-// priceFromZ below has NO ceiling — there is no z-score high enough to make
-// price stop climbing. Below +-`spread` std-devs it's the familiar
-// exponential curve (same shape as before, so a typical player's price
-// still feels like it always has). Beyond that, instead of clamping flat
-// (a hard ceiling) or continuing the SAME exponential (which is what
-// "insane compounding" means in practice — every extra std-dev multiplies
-// price instead of adding to it, so an outlier's price explodes), it
-// switches to growing LINEARLY, at whatever rate the exponential curve was
-// already moving at right at that point — so the join has no kink, but
-// each extra point of elo edge buys a little less than the last, forever,
-// instead of buying more and more (exponential) or nothing at all (a cap).
+// priceFromZ below is a STRAIGHT LINE in z — every extra standard deviation
+// of elo edge is worth the same fixed dollar amount, wherever you are in
+// the distribution. That fixed-per-unit design is the whole point, and the
+// reason this isn't exponential (like the first version of this fix was):
+// exponential means each extra std-dev MULTIPLIES price by the same
+// factor, and multiplying a bigger number produces a bigger jump — so two
+// players close together near the top end up with wildly different prices
+// even for a modest real elo gap, purely because they're both already
+// expensive. That's the same "compounding" character behind the original
+// bug this whole system was built to avoid, just resurfacing here. Linear
+// has no such effect: a given elo gap is worth the same price gap whether
+// it happens near the middle of the pack or way out at the front, AND
+// there's still no ceiling — price keeps climbing for as long as z does,
+// forever, just steadily instead of accelerating.
 function priceFromZ(z) {
-    const t = PRICE_SCALE_SETTINGS.spread || DEFAULT_PRICE_SCALE.spread; // std-devs where the curve straightens out from exponential to linear
-    const ratio = PRICE_SCALE_SETTINGS.top / PRICE_SCALE_SETTINGS.median;
-    let price;
-    if (Math.abs(z) <= t) {
-        price = PRICE_SCALE_SETTINGS.median * Math.pow(ratio, z / t);
-    } else {
-        const edgeZ = Math.sign(z) * t;
-        const edgePrice = PRICE_SCALE_SETTINGS.median * Math.pow(ratio, edgeZ / t); // == top (or median^2/top on the downside)
-        const slopeAtEdge = edgePrice * Math.log(ratio) / t; // d(price)/dz of the exponential, evaluated at the join
-        price = edgePrice + slopeAtEdge * (z - edgeZ);
-    }
+    const t = PRICE_SCALE_SETTINGS.spread || DEFAULT_PRICE_SCALE.spread; // std-devs of edge to go from median price to top price
+    const median = PRICE_SCALE_SETTINGS.median;
+    const top = PRICE_SCALE_SETTINGS.top;
+    const slope = (top - median) / t; // $ per 1 std-dev of edge -- constant, on purpose (see above)
+    const price = median + slope * z;
     return Math.round(Math.max(0.01, price) * 100) / 100; // floor only to keep price positive, not a ceiling
 }
 function pricesFromEloSnapshot(ratings, allNames) {
