@@ -2732,18 +2732,32 @@ document.getElementById('dbgDiagnoseTradePerms').addEventListener('click', async
     // stock-only shape, written before side/strike/expiryDay/premium/settlePrice existed.
     // Testing the stock baseline plus one extra field at a time finds exactly which of
     // those newer fields the rule doesn't recognize yet.
-    const base = { symbol: '__permtest__', qty: 0, boughtDay: state.day, status: 'settled', dismissed: true, cashDelta: 0, realizedDelta: 0 };
+    // The rule's status check only accepts 'open' | 'sold' | 'won' | 'lost' — 'settled' isn't
+    // one of them, so every variant below was being denied on that check alone, before the
+    // rule ever reached the stock-vs-option branch this tool is trying to isolate.
+    // canonicalPrice() also errors (rather than returning null) if the symbol isn't a real key
+    // in the latest published prices map, so a placeholder like '__permtest__' would deny every
+    // stock/option variant too — use a real, currently-priced symbol instead.
+    const realSymbol = Object.keys(state.players || {}).find(s => currentPrice(s) != null);
+    if (!realSymbol) {
+        out.textContent = 'Could not find a currently-priced symbol to test against — publish at least one report first, then re-run this.';
+        return;
+    }
+    const price = currentPrice(realSymbol);
+    const base = { symbol: realSymbol, qty: 0, boughtDay: state.day, status: 'sold', dismissed: true, cashDelta: 0, realizedDelta: 0 };
     const extraFields = [
         { field: 'side', value: 'long' },
         { field: 'strike', value: 1 },
         { field: 'expiryDay', value: state.day },
-        { field: 'premium', value: 0 },
+        { field: 'premium', value: 0.5 },
         { field: 'settlePrice', value: 0 }
     ];
     const variants = [
         { label: 'Stock-shape position (baseline — type, symbol, qty, avgCost, boughtDay, status, dismissed, cashDelta, realizedDelta)', data: { ...base, type: 'stock', avgCost: 0 } },
         ...extraFields.map(({ field, value }) => ({ label: 'Stock-shape + "' + field + '" field added', data: { ...base, type: 'stock', avgCost: 0, [field]: value } })),
-        { label: 'Full option-shape position (type=call, side, symbol, strike, expiryDay, qty, premium, boughtDay, status, settlePrice, dismissed, cashDelta, realizedDelta)', data: { type: 'call', side: 'long', symbol: '__permtest__', strike: 1, expiryDay: state.day, qty: 0, premium: 0, boughtDay: state.day, status: 'settled', settlePrice: 0, dismissed: true, cashDelta: 0, realizedDelta: 0 } }
+        // strike is set far above the current price so premium (0.5, the rule's own floor) always
+        // satisfies "premium >= price - strike" for a call, regardless of what the symbol is priced at.
+        { label: 'Full option-shape position (type=call, side, symbol, strike, expiryDay, qty, premium, boughtDay, status, settlePrice, dismissed, cashDelta, realizedDelta)', data: { type: 'call', side: 'long', symbol: realSymbol, strike: price + 1000, expiryDay: state.day, qty: 0, premium: 0.5, boughtDay: state.day, status: 'sold', settlePrice: 0, dismissed: true, cashDelta: 0, realizedDelta: 0 } }
     ];
     const results = [];
     for (const v of variants) {
