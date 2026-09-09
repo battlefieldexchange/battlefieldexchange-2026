@@ -398,11 +398,17 @@
           <div class="weight-row"><label>Spread — std. deviations of edge from median price to top price</label><input type="number" step="0.1" min="0.5" id="pSpread" style="width:100%"><span></span></div>
           <button class="debug-btn" id="dbgRecalc">Recalculate &amp; broadcast to all clients</button>
           <div class="msg" id="wMsg"></div>
+          <div class="admin-note" style="margin-top:16px;">If buy/sell prices ever look out of sync with what's shown on screen (e.g. the confirm step wants far more or less cash than the displayed price implies) — that means a weight change or name merge happened without a report since. This forces the trade-time price snapshot to match the current display right now, without changing any settings.</div>
+          <button class="debug-btn" id="dbgForceResync">Force resync buy/sell prices now</button>
+          <div class="msg" id="resyncMsg"></div>
           <div class="debug-inline" style="margin-top:10px;">
             <button class="debug-btn" id="dbgFindDupes">Scan existing reports for duplicate stats</button>
             <button class="debug-btn" id="dbgMigrateReports">Clean up duplicates &amp; lock in IDs</button>
           </div>
           <div id="dupeResults" style="margin-top:10px; font-size:12px; color:var(--text-dim); white-space:pre-line;"></div>
+          <div class="admin-note" style="margin-top:16px;">If "lock in IDs" reports permission-denied on re-filing: Firestore never says which rule clause it was (by design, so rules logic can't be reverse-engineered from errors) — so this tries a few minimal write variants against one disposable test doc (deleted immediately after, real data untouched) to empirically find which field your security rules are rejecting.</div>
+          <button class="debug-btn" id="dbgDiagnosePerms">Diagnose rekey permission error</button>
+          <div id="permDiagResults" style="margin-top:10px; font-size:12px; color:var(--text-dim); white-space:pre-line;"></div>
           <div class="admin-note" style="margin-top:16px;">Group misread player names — the report bot sometimes reads the same real player as several different names. Select every name that's really the same person, type the correct display name, and save: past and future reports using any of those names get merged into one player everywhere prices, Elo, and holdings are computed.</div>
           <div class="field"><label>Names to merge (ctrl/cmd-click to select several)</label><select id="nameGroupSelect" multiple size="8" style="width:100%;"></select></div>
           <div class="field"><label>Correct display name</label><input type="text" id="nameGroupCanonical" placeholder="e.g. Tristed Commando"></div>
@@ -1082,9 +1088,24 @@ async function recalculatePriceScale() {
     const msg = document.getElementById('wMsg');
     try {
         await setDoc(doc(db, 'settings', 'priceWeights'), { ...settings, updatedAt: serverTimestamp(), updatedBy: state.username });
+        // Update locally right away rather than waiting on the settings listener to round-trip
+        // back down — buy/sell would otherwise be republished a moment later using the OLD
+        // weights if this function raced ahead of that listener.
+        PRICE_SCALE_SETTINGS = { ...settings };
+        recomputeMarket();
+        renderAll();
+        let synced = true;
+        try {
+            await republishLatestPriceSnapshot();
+        }
+        catch (syncErr) {
+            synced = false;
+        }
         if (msg) {
-            msg.textContent = 'Broadcast — every connected trader just recalculated.';
-            msg.className = 'auth-msg ok';
+            msg.textContent = synced
+                ? 'Broadcast — every connected trader just recalculated, and buy/sell prices are back in sync with the new scale.'
+                : 'Broadcast to displays succeeded, but re-syncing buy/sell prices failed — trades may still use the old scale until the next report. Check console for details.';
+            msg.className = synced ? 'auth-msg ok' : 'auth-msg err';
         }
     }
     catch (err) {
@@ -1136,6 +1157,27 @@ function renderNameGroupsList() {
         '<button class="debug-btn" data-remove-group="' + canon.replace(/"/g, '&quot;') + '" style="padding:2px 8px;">Remove</button>' +
         '</div>').join('');
 }
+// Merging a name changes what it resolves to on the live display immediately, but
+// pricesByReport (what buy/sell actually charges/pays) only carries alias keys that
+// existed at the last report submission. Without republishing here too, a position
+// bought under the old/misspelled name can't be sold — "market price isn't published
+// yet" — until the next report happens to come in and backfills it.
+async function applyNameAliasUpdate(newMap) {
+    await setDoc(doc(db, 'settings', 'nameAliases'), { map: newMap, updatedAt: serverTimestamp(), updatedBy: state.username });
+    NAME_ALIASES = newMap;
+    recomputeMarket();
+    renderAll();
+    populateNameGroupSelect();
+    renderNameGroupsList();
+    try {
+        await republishLatestPriceSnapshot();
+        return true;
+    }
+    catch (syncErr) {
+        console.error('[bfx] Failed to republish price snapshot after alias change:', syncErr);
+        return false;
+    }
+}
 async function saveNameGroup() {
     if (!state.isAdmin)
         return;
@@ -1157,11 +1199,13 @@ async function saveNameGroup() {
             newMap[alias] = canonical;
     });
     try {
-        await setDoc(doc(db, 'settings', 'nameAliases'), { map: newMap, updatedAt: serverTimestamp(), updatedBy: state.username });
+        const synced = await applyNameAliasUpdate(newMap);
         canonicalInput.value = '';
         if (msg) {
-            msg.textContent = 'Saved — merged into ' + canonical + '.';
-            msg.className = 'msg ok';
+            msg.textContent = synced
+                ? 'Saved — merged into ' + canonical + '. Buy/sell prices are synced, so any open positions under the old name(s) can be traded right away.'
+                : 'Saved — merged into ' + canonical + ', but re-syncing buy/sell prices failed. Positions under the old name(s) may not be sellable until the next report.';
+            msg.className = synced ? 'msg ok' : 'msg err';
         }
     }
     catch (err) {
@@ -1180,7 +1224,7 @@ async function removeNameGroup(canonical) {
             delete newMap[alias];
     });
     try {
-        await setDoc(doc(db, 'settings', 'nameAliases'), { map: newMap, updatedAt: serverTimestamp(), updatedBy: state.username });
+        await applyNameAliasUpdate(newMap);
     }
     catch (err) { }
 }
@@ -1225,10 +1269,11 @@ async function bulkImportNameGroups() {
         });
     });
     try {
-        await setDoc(doc(db, 'settings', 'nameAliases'), { map: newMap, updatedAt: serverTimestamp(), updatedBy: state.username });
+        const synced = await applyNameAliasUpdate(newMap);
         ta.value = '';
-        msg.textContent = 'Imported ' + groups.length + ' group' + (groups.length === 1 ? '' : 's') + (errors.length ? (' — skipped ' + errors.length + ' bad line(s): ' + errors.join('; ')) : '') + '.';
-        msg.className = 'msg ok';
+        const base = 'Imported ' + groups.length + ' group' + (groups.length === 1 ? '' : 's') + (errors.length ? (' — skipped ' + errors.length + ' bad line(s): ' + errors.join('; ')) : '') + '.';
+        msg.textContent = synced ? base : (base + ' Re-syncing buy/sell prices failed — trades for these names may lag until the next report.');
+        msg.className = synced ? 'msg ok' : 'msg err';
     }
     catch (err) {
         msg.textContent = 'Failed: ' + err.message;
@@ -1333,33 +1378,50 @@ function populateWeightInputsIfIdle() {
             el.value = PRICE_SCALE_SETTINGS[map[id]];
     });
 }
+function buildLatestPriceMap() {
+    const { players } = computeMarketFromReports(state.reports);
+    const priceMap = {};
+    Object.keys(players).forEach(name => {
+        const hist = players[name].priceHistory;
+        priceMap[name] = hist.length ? hist[hist.length - 1].price : null;
+    });
+    Object.keys(NAME_ALIASES).forEach(alias => {
+        const canon = NAME_ALIASES[alias];
+        if (priceMap[canon] != null)
+            priceMap[alias] = priceMap[canon];
+    });
+    return priceMap;
+}
+// Buy/sell/premium PREVIEWS are computed live on every client from state.reports +
+// PRICE_SCALE_SETTINGS + NAME_ALIASES, so they update instantly whenever any of those
+// change. But the money that actually moves comes from the *stored* pricesByReport
+// snapshot (read inside the buyStock/sellStock transactions) — and that snapshot is
+// only ever written when a new report is submitted. Change the price weights or merge
+// a name into an alias without a new report following it, and the live preview drifts
+// away from the frozen snapshot indefinitely — display says one price, the transaction
+// charges/pays another. This re-generates that snapshot on demand (same shape/logic as
+// a fresh report submission would produce) so trades stay in sync with the display the
+// moment an admin changes something, not just whenever the next report happens to land.
+async function republishLatestPriceSnapshot() {
+    if (!state.reports.length)
+        return false;
+    const latest = [...state.reports].sort((a, b) => b.day - a.day)[0];
+    const priceMap = buildLatestPriceMap();
+    await setDoc(doc(db, 'pricesByReport', latest.id), { reportId: latest.id, day: latest.day, prices: priceMap });
+    await setDoc(doc(db, 'market', 'latestReportId'), { reportId: latest.id, day: latest.day });
+    return true;
+}
 let priceSnapshotBackfillAttempted = false;
 async function ensurePriceSnapshotExists() {
     if (priceSnapshotBackfillAttempted)
         return;
     priceSnapshotBackfillAttempted = true;
     try {
-        const pointerRef = doc(db, 'market', 'latestReportId');
-        const pointerSnap = await getDoc(pointerRef);
+        const pointerSnap = await getDoc(doc(db, 'market', 'latestReportId'));
         if (pointerSnap.exists())
             return;
-        if (!state.reports.length)
-            return;
-        const { players } = computeMarketFromReports(state.reports);
-        const priceMap = {};
-        Object.keys(players).forEach(name => {
-            const hist = players[name].priceHistory;
-            priceMap[name] = hist.length ? hist[hist.length - 1].price : null;
-        });
-        Object.keys(NAME_ALIASES).forEach(alias => {
-            const canon = NAME_ALIASES[alias];
-            if (priceMap[canon] != null)
-                priceMap[alias] = priceMap[canon];
-        });
-        const latest = [...state.reports].sort((a, b) => b.day - a.day)[0];
-        await setDoc(doc(db, 'pricesByReport', latest.id), { reportId: latest.id, day: latest.day, prices: priceMap });
-        await setDoc(pointerRef, { reportId: latest.id, day: latest.day });
-        console.log('[bfx] Backfilled initial price snapshot for day', latest.day);
+        if (await republishLatestPriceSnapshot())
+            console.log('[bfx] Backfilled initial price snapshot');
     }
     catch (e) {
     }
@@ -2528,6 +2590,68 @@ document.getElementById('dbgMigrateReports').addEventListener('click', async () 
     }
     out.textContent = lines.join('\n');
 });
+document.getElementById('dbgDiagnosePerms').addEventListener('click', async () => {
+    const out = document.getElementById('permDiagResults');
+    if (!state.reports.length) {
+        out.textContent = 'No reports loaded to test against.';
+        return;
+    }
+    const sample = state.reports[0];
+    const testId = '__permtest_' + state.uid + '_' + Date.now();
+    const testRef = doc(db, 'reports', testId);
+    const baseData = {
+        day: sample.day ?? null,
+        filename: sample.filename ?? null,
+        isSynthetic: !!sample.isSynthetic,
+        players: sample.players ?? []
+    };
+    // Each variant changes exactly one thing relative to the real rekey write, so whichever
+    // variant(s) get allowed tell us exactly which field the rules are actually checking —
+    // without needing to see the rules themselves (Firestore never reveals which clause
+    // denied a write, on purpose, so this is the only way to find out from the client).
+    const variants = [
+        { label: 'Exact copy of a real rekey (original uploadedBy + original uploadedAt)', data: { ...baseData, uploadedBy: sample.uploadedBy ?? null, uploadedByUsername: sample.uploadedByUsername ?? null, uploadedAt: sample.uploadedAt ?? null } },
+        { label: 'Fresh uploadedAt (serverTimestamp), original uploadedBy kept', data: { ...baseData, uploadedBy: sample.uploadedBy ?? null, uploadedByUsername: sample.uploadedByUsername ?? null, uploadedAt: serverTimestamp() } },
+        { label: 'This admin as uploadedBy, original uploadedAt kept', data: { ...baseData, uploadedBy: state.uid, uploadedByUsername: state.username ?? null, uploadedAt: sample.uploadedAt ?? null } },
+        { label: 'This admin as uploadedBy + fresh uploadedAt', data: { ...baseData, uploadedBy: state.uid, uploadedByUsername: state.username ?? null, uploadedAt: serverTimestamp() } }
+    ];
+    out.textContent = 'Testing ' + variants.length + ' write variants against one disposable test doc (deleted immediately after each attempt, real data is never touched)…';
+    const results = [];
+    for (const v of variants) {
+        try {
+            await setDoc(testRef, v.data);
+            results.push('✓ ALLOWED — ' + v.label);
+            try {
+                await deleteDoc(testRef);
+            }
+            catch (cleanupErr) {
+                results.push('   (could not clean up the test doc — please manually delete reports/' + testId + ' — ' + cleanupErr.message + ')');
+            }
+        }
+        catch (err) {
+            results.push('✗ denied — ' + v.label);
+        }
+    }
+    const allowed = results.filter(r => r.startsWith('✓'));
+    results.push('');
+    if (allowed.length === 0) {
+        results.push('None of the variants were allowed — the block isn\'t about uploadedBy or uploadedAt. It\'s something else in your create rule for /reports (a different required field, a schema/type check, or the create rule not granting admins any bypass at all). At this point I\'d need to see the actual rule text for /reports to go further.');
+    }
+    else if (allowed.some(r => r.includes('Exact copy'))) {
+        results.push('The exact-copy variant was allowed — that\'s unexpected given the real migration failed the same way. This could mean the rules changed since the last run, or there was a transient issue. Worth just re-running "Clean up duplicates & lock in IDs" again.');
+    }
+    else {
+        const needsSelf = allowed.some(r => r.includes('This admin as uploadedBy'));
+        const needsFreshTs = allowed.some(r => r.includes('fresh uploadedAt'));
+        if (needsSelf && !allowed.some(r => r.includes('This admin as uploadedBy, original')))
+            results.push('Your create rule requires BOTH uploadedBy == the signed-in user\'s uid AND uploadedAt == request.time. Only the variant with both changed was allowed.');
+        else if (needsSelf)
+            results.push('Your create rule requires uploadedBy to equal the signed-in user\'s own uid. That\'s why every rekey failed — the admin running cleanup isn\'t the original uploader of any of those reports. Fix: give /reports create the same admin bypass your delete rule already has, e.g.\nallow create: if request.auth.uid == request.resource.data.uploadedBy || exists(/databases/$(database)/documents/admins/$(request.auth.uid));');
+        else if (needsFreshTs)
+            results.push('Your create rule requires uploadedAt to equal request.time (a normal timestamp-spoofing guard) — it rejects re-using an old timestamp on a new doc. Fix on the rules side, OR I can change the migration to store the original timestamp under a different field (e.g. originalUploadedAt) and stamp uploadedAt fresh with serverTimestamp() on rekey — say the word and I\'ll wire that up.');
+    }
+    out.textContent = results.join('\n');
+});
 document.getElementById('dbgAdvanceDay').addEventListener('click', async () => {
     const counterRef = doc(db, 'counters', 'day');
     try {
@@ -2555,6 +2679,30 @@ document.getElementById('dbgJumpBtn').addEventListener('click', async () => {
     }
 });
 document.getElementById('dbgRecalc').addEventListener('click', recalculatePriceScale);
+document.getElementById('dbgForceResync').addEventListener('click', async () => {
+    if (!state.isAdmin)
+        return;
+    const msg = document.getElementById('resyncMsg');
+    if (msg) {
+        msg.textContent = 'Resyncing…';
+        msg.className = 'msg';
+    }
+    try {
+        const ok = await republishLatestPriceSnapshot();
+        if (msg) {
+            msg.textContent = ok
+                ? 'Done — buy/sell now trade at the same prices shown on screen.'
+                : 'No reports loaded yet — nothing to resync.';
+            msg.className = ok ? 'msg ok' : 'msg err';
+        }
+    }
+    catch (err) {
+        if (msg) {
+            msg.textContent = 'Failed: ' + err.message;
+            msg.className = 'msg err';
+        }
+    }
+});
 document.getElementById('dbgSaveNameGroup').addEventListener('click', saveNameGroup);
 document.getElementById('nameGroupsList').addEventListener('click', (e) => {
     const canon = e.target?.dataset?.removeGroup;
