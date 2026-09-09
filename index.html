@@ -235,6 +235,23 @@
   .ocr-actions button{flex:1;font-family:var(--mono);font-size:11px;background:transparent;border:1px solid var(--line);color:var(--text-dim);padding:6px 9px;border-radius:2px;cursor:pointer;}
   .ocr-actions button:hover{border-color:var(--phosphor-dim);color:var(--phosphor);}
   .ocr-actions button:disabled{opacity:.45;cursor:not-allowed;}
+  .ocr-review{margin-top:14px;display:none;}
+  .ocr-review-legend{font-size:11px;color:var(--text-dim);margin-bottom:8px;display:flex;gap:14px;flex-wrap:wrap;}
+  .ocr-review-legend span{display:inline-flex;align-items:center;gap:5px;}
+  .ocr-review-legend i{width:9px;height:9px;border-radius:2px;display:inline-block;}
+  .ocr-review-wrap{overflow-x:auto;border:1px solid var(--line);border-radius:3px;}
+  table.ocr-review-table{border-collapse:collapse;font-size:12px;width:100%;}
+  table.ocr-review-table th{text-align:left;font-family:var(--sans);font-weight:600;font-size:11px;color:var(--text-dim);border-bottom:1px solid var(--line);padding:6px 5px;white-space:nowrap;position:sticky;top:0;background:var(--panel);}
+  table.ocr-review-table td{padding:3px;border-bottom:1px solid rgba(36,53,42,0.6);}
+  table.ocr-review-table input{width:100%;min-width:56px;background:var(--panel-2);border:1px solid var(--line);color:var(--text);padding:5px 6px;font-family:var(--mono);font-size:12px;border-radius:2px;box-sizing:border-box;}
+  table.ocr-review-table input:focus{outline:none;border-color:var(--phosphor-dim);}
+  table.ocr-review-table input.ocr-low-conf{border-color:var(--amber);background:rgba(224,179,77,0.10);}
+  table.ocr-review-table input.ocr-implausible{border-color:var(--red);background:rgba(255,107,93,0.10);}
+  table.ocr-review-table td.ocr-row-num{color:var(--text-dim);font-size:11px;padding-left:8px;white-space:nowrap;}
+  .ocr-name-suggest{font-size:10px;color:var(--amber);margin-top:2px;cursor:pointer;white-space:nowrap;}
+  .ocr-name-suggest:hover{color:var(--phosphor);text-decoration:underline;}
+  .ocr-review-remove{background:transparent;border:1px solid var(--line);color:var(--red);border-radius:2px;cursor:pointer;font-family:var(--mono);font-size:11px;padding:4px 7px;}
+  .ocr-review-remove:hover{border-color:var(--red);}
 
   
   .outcome-input-row{display:flex; gap:6px; margin-bottom:8px; align-items:center;}
@@ -367,6 +384,16 @@
               </div>
               <div class="ocr-progress" id="ocrProgress"><div id="ocrProgressBar"></div></div>
               <div class="ocr-status" id="ocrStatus"></div>
+              <div class="ocr-review" id="ocrReview">
+                <div class="ocr-review-legend">
+                  <span><i style="background:var(--amber);"></i>low OCR confidence — double-check against the image</span>
+                  <span><i style="background:var(--red);"></i>implausible value — almost certainly a misread</span>
+                  <span>Every cell is editable. Fix anything before downloading or uploading.</span>
+                </div>
+                <div class="ocr-review-wrap">
+                  <table class="ocr-review-table" id="ocrReviewTable"></table>
+                </div>
+              </div>
               <div class="ocr-actions">
                 <button id="downloadConvertedHtml" disabled>Download converted .html</button>
                 <button id="uploadConvertedHtml" disabled>Upload converted report</button>
@@ -401,6 +428,9 @@
           <div class="admin-note" style="margin-top:16px;">If buy/sell prices ever look out of sync with what's shown on screen (e.g. the confirm step wants far more or less cash than the displayed price implies) — that means a weight change or name merge happened without a report since. This forces the trade-time price snapshot to match the current display right now, without changing any settings.</div>
           <button class="debug-btn" id="dbgForceResync">Force resync buy/sell prices now</button>
           <div class="msg" id="resyncMsg"></div>
+          <div class="admin-note" style="margin-top:16px;">If options/writes fail with "Missing or insufficient permissions" (stock trading unaffected): tests whether your positions security rule was updated for the newer option/write fields (side, strike, expiryDay, premium, settlePrice) alongside the older stock-only shape. Writes disposable, zero-value test positions under your own account and deletes each immediately; your real cash and positions are never touched.</div>
+          <button class="debug-btn" id="dbgDiagnoseTradePerms">Diagnose option/write trade permission error</button>
+          <div id="tradeDiagResults" style="margin-top:10px; font-size:12px; color:var(--text-dim); white-space:pre-line;"></div>
           <div class="debug-inline" style="margin-top:10px;">
             <button class="debug-btn" id="dbgFindDupes">Scan existing reports for duplicate stats</button>
             <button class="debug-btn" id="dbgMigrateReports">Clean up duplicates &amp; lock in IDs</button>
@@ -1402,13 +1432,23 @@ function buildLatestPriceMap() {
 // charges/pays another. This re-generates that snapshot on demand (same shape/logic as
 // a fresh report submission would produce) so trades stay in sync with the display the
 // moment an admin changes something, not just whenever the next report happens to land.
+//
+// Important: this ALWAYS writes a brand-new pricesByReport document (auto-generated ID)
+// rather than overwriting the existing snapshot for the latest report. pricesByReport is
+// almost certainly rules-protected as a write-once historical record (that's the whole
+// point of stamping a price snapshot per report), so an overwrite attempt reads as a
+// forged/tampered write and gets rejected with permission-denied — which is exactly the
+// "Force resync" failure. Only ever creating new docs and repointing market/latestReportId
+// at the newest one (a field that's already updated by every normal report submission,
+// so it's known to be writable) avoids that path entirely.
 async function republishLatestPriceSnapshot() {
     if (!state.reports.length)
         return false;
     const latest = [...state.reports].sort((a, b) => b.day - a.day)[0];
     const priceMap = buildLatestPriceMap();
-    await setDoc(doc(db, 'pricesByReport', latest.id), { reportId: latest.id, day: latest.day, prices: priceMap });
-    await setDoc(doc(db, 'market', 'latestReportId'), { reportId: latest.id, day: latest.day });
+    const freshRef = doc(collection(db, 'pricesByReport'));
+    await setDoc(freshRef, { reportId: latest.id, day: latest.day, prices: priceMap, resyncOf: latest.id, resyncedAt: serverTimestamp() });
+    await setDoc(doc(db, 'market', 'latestReportId'), { reportId: freshRef.id, day: latest.day });
     return true;
 }
 let priceSnapshotBackfillAttempted = false;
@@ -2679,6 +2719,68 @@ document.getElementById('dbgJumpBtn').addEventListener('click', async () => {
     }
 });
 document.getElementById('dbgRecalc').addEventListener('click', recalculatePriceScale);
+document.getElementById('dbgDiagnoseTradePerms').addEventListener('click', async () => {
+    if (!state.isAdmin)
+        return;
+    const out = document.getElementById('tradeDiagResults');
+    out.textContent = 'Testing disposable, zero-value test positions under your own account (each is deleted immediately after; your real cash and positions are never touched)…';
+    // Stock positions and option/write positions use different field shapes:
+    //   stock:  type, symbol, qty, avgCost, boughtDay, status, dismissed, cashDelta, realizedDelta
+    //   option: type, side, symbol, strike, expiryDay, qty, premium, boughtDay, status, settlePrice, dismissed, cashDelta, realizedDelta
+    // If stock trading works but options don't, the likely cause is a positions security
+    // rule doing strict field validation (e.g. hasOnly([...])) against the OLDER,
+    // stock-only shape, written before side/strike/expiryDay/premium/settlePrice existed.
+    // Testing the stock baseline plus one extra field at a time finds exactly which of
+    // those newer fields the rule doesn't recognize yet.
+    const base = { symbol: '__permtest__', qty: 0, boughtDay: state.day, status: 'settled', dismissed: true, cashDelta: 0, realizedDelta: 0 };
+    const extraFields = [
+        { field: 'side', value: 'long' },
+        { field: 'strike', value: 1 },
+        { field: 'expiryDay', value: state.day },
+        { field: 'premium', value: 0 },
+        { field: 'settlePrice', value: 0 }
+    ];
+    const variants = [
+        { label: 'Stock-shape position (baseline — type, symbol, qty, avgCost, boughtDay, status, dismissed, cashDelta, realizedDelta)', data: { ...base, type: 'stock', avgCost: 0 } },
+        ...extraFields.map(({ field, value }) => ({ label: 'Stock-shape + "' + field + '" field added', data: { ...base, type: 'stock', avgCost: 0, [field]: value } })),
+        { label: 'Full option-shape position (type=call, side, symbol, strike, expiryDay, qty, premium, boughtDay, status, settlePrice, dismissed, cashDelta, realizedDelta)', data: { type: 'call', side: 'long', symbol: '__permtest__', strike: 1, expiryDay: state.day, qty: 0, premium: 0, boughtDay: state.day, status: 'settled', settlePrice: 0, dismissed: true, cashDelta: 0, realizedDelta: 0 } }
+    ];
+    const results = [];
+    for (const v of variants) {
+        const testRef = doc(collection(db, 'users', state.uid, 'positions'));
+        try {
+            await setDoc(testRef, v.data);
+            results.push('✓ allowed — ' + v.label);
+            try {
+                await deleteDoc(testRef);
+            }
+            catch (cleanupErr) {
+                results.push('   (could not clean up this test doc — please manually delete users/' + state.uid + '/positions/' + testRef.id + ' — ' + cleanupErr.message + ')');
+            }
+        }
+        catch (err) {
+            results.push('✗ DENIED — ' + v.label);
+        }
+    }
+    const deniedFields = extraFields
+        .map(({ field }, i) => ({ field, denied: results[i + 1] && results[i + 1].startsWith('✗') }))
+        .filter(r => r.denied)
+        .map(r => r.field);
+    results.push('');
+    if (results[0].startsWith('✗')) {
+        results.push('Even the plain stock-shape position was denied — that means it isn\'t specific to options, something more fundamental is blocking ALL position creation right now (auth, or the positions rule itself). Worth checking that rule directly rather than the option fields.');
+    }
+    else if (deniedFields.length) {
+        results.push('Found it: the positions security rule accepts the stock shape but rejects ' + deniedFields.join(', ') + ' — fields options/writes need that stock trades don\'t use. That points to strict schema validation (e.g. request.resource.data.keys().hasOnly([...])) written before the Buy/Sell (Write) options feature added them. Add ' + deniedFields.join(', ') + ' to the allowed field list for /users/{uid}/positions/{posId} in your Firestore rules and options should start working immediately — no app code changes needed.');
+    }
+    else if (results[variants.length - 1].startsWith('✗')) {
+        results.push('Each new field was fine on its own, but the FULL combination (everything together, as a real option trade sends) was denied. Your rule may cap the total field count or check fields in combination rather than as a simple allowlist — worth reviewing the full rule text for /users/{uid}/positions/{posId}.');
+    }
+    else {
+        results.push('Everything above was allowed, including the full option shape — position creation itself looks fine right now. If trades still fail, the block is more likely on the users/{uid} cash update than on the position doc. Tell me and I\'ll build a diagnostic for that side too — I\'ll test it without ever writing to your real cash or realized fields.');
+    }
+    out.textContent = results.join('\n');
+});
 document.getElementById('dbgForceResync').addEventListener('click', async () => {
     if (!state.isAdmin)
         return;
@@ -3798,35 +3900,155 @@ function groupIndices(indices, gap) {
     groups.push(cur);
     return groups.map(g => g.reduce((a, b) => a + b, 0) / g.length);
 }
+// Standard edit-distance DP, used to fuzzy-match OCR'd headers against the known column
+// vocabulary and OCR'd player names against already-known players — so a couple of
+// garbled characters ("Kilis", "Tristed Comando") no longer means a missed column or a
+// silently-created duplicate player.
+function levenshtein(a, b) {
+    a = a || '';
+    b = b || '';
+    const m = a.length, n = b.length;
+    if (m === 0)
+        return n;
+    if (n === 0)
+        return m;
+    const dp = new Array(n + 1);
+    for (let j = 0; j <= n; j++)
+        dp[j] = j;
+    for (let i = 1; i <= m; i++) {
+        let prev = dp[0];
+        dp[0] = i;
+        for (let j = 1; j <= n; j++) {
+            const tmp = dp[j];
+            dp[j] = a[i - 1] === b[j - 1] ? prev : 1 + Math.min(prev, dp[j], dp[j - 1]);
+            prev = tmp;
+        }
+    }
+    return dp[n];
+}
+function closestByLevenshtein(target, candidates, maxDistance) {
+    let best = null, bestDist = Infinity;
+    candidates.forEach(cand => {
+        if (cand === target)
+            return;
+        const d = levenshtein(target, cand);
+        if (d < bestDist) {
+            bestDist = d;
+            best = cand;
+        }
+    });
+    if (best === null || bestDist === 0)
+        return null;
+    const limit = maxDistance != null ? maxDistance : Math.max(1, Math.floor(target.length * 0.25));
+    return bestDist <= limit ? { match: best, distance: bestDist } : null;
+}
+// Otsu's method: finds the brightness cutoff that best separates a cell's pixels into
+// two clean clusters (ink vs background) by maximizing between-class variance, then
+// snaps every pixel to pure black or white at that cutoff. This is a much stronger,
+// per-cell-adaptive alternative to a single fixed brightness threshold, and is used as
+// an escalation pass when the first OCR attempt on a cell comes back low-confidence —
+// faint text, background tint, and compression noise are exactly what it cleans up.
+function binarizeCanvas(sourceCanvas) {
+    const w = sourceCanvas.width, h = sourceCanvas.height;
+    if (!w || !h)
+        return sourceCanvas;
+    const out = document.createElement('canvas');
+    out.width = w;
+    out.height = h;
+    const ctx = out.getContext('2d');
+    ctx.drawImage(sourceCanvas, 0, 0);
+    const imageData = ctx.getImageData(0, 0, w, h);
+    const data = imageData.data;
+    const n = w * h;
+    const gray = new Uint8ClampedArray(n);
+    const hist = new Uint32Array(256);
+    for (let i = 0, p = 0; i < data.length; i += 4, p++) {
+        const l = Math.round(0.299 * data[i] + 0.587 * data[i + 1] + 0.114 * data[i + 2]);
+        gray[p] = l;
+        hist[l]++;
+    }
+    let sumAll = 0;
+    for (let v = 0; v < 256; v++)
+        sumAll += v * hist[v];
+    let sumB = 0, wB = 0, maxVar = 0, threshold = 128;
+    for (let t = 0; t < 256; t++) {
+        wB += hist[t];
+        if (wB === 0)
+            continue;
+        const wF = n - wB;
+        if (wF === 0)
+            break;
+        sumB += t * hist[t];
+        const mB = sumB / wB;
+        const mF = (sumAll - sumB) / wF;
+        const between = wB * wF * (mB - mF) * (mB - mF);
+        if (between > maxVar) {
+            maxVar = between;
+            threshold = t;
+        }
+    }
+    for (let i = 0, p = 0; i < data.length; i += 4, p++) {
+        const v = gray[p] > threshold ? 255 : 0;
+        data[i] = data[i + 1] = data[i + 2] = v;
+    }
+    ctx.putImageData(imageData, 0, 0);
+    return out;
+}
 function detectTableGrid(canvas) {
     const w = canvas.width, h = canvas.height;
     const { data } = canvas.getContext('2d').getImageData(0, 0, w, h);
-    const colGrayCount = new Float64Array(w);
-    const rowGrayCount = new Float64Array(h);
+    // Luminance-weighted grayscale + contrast-against-the-image's-own-average, rather
+    // than the old "near-neutral gray and darker than a fixed value" check. That old
+    // check only ever found dark-gray lines on a light background; it was blind to
+    // colored/tinted borders and to dark-themed screenshots (light lines on dark bg),
+    // both common in game UI. Contrast against the image's own mean brightness works
+    // for either direction and either hue.
+    const gray = new Float32Array(w * h);
+    let sum = 0;
+    for (let i = 0, p = 0; i < data.length; i += 4, p++) {
+        const l = 0.299 * data[i] + 0.587 * data[i + 1] + 0.114 * data[i + 2];
+        gray[p] = l;
+        sum += l;
+    }
+    const mean = sum / gray.length;
+    const colScore = new Float64Array(w);
+    const rowScore = new Float64Array(h);
     for (let y = 0; y < h; y++) {
-        const rowBase = y * w * 4;
+        const rowBase = y * w;
         for (let x = 0; x < w; x++) {
-            const i = rowBase + x * 4;
-            const r = data[i], g = data[i + 1], b = data[i + 2];
-            if (Math.abs(r - g) < 10 && Math.abs(g - b) < 10 && r < 200) {
-                colGrayCount[x]++;
-                rowGrayCount[y]++;
+            if (Math.abs(gray[rowBase + x] - mean) > 35) {
+                colScore[x]++;
+                rowScore[y]++;
             }
         }
     }
-    const colIdx = [];
-    for (let x = 0; x < w; x++)
-        if (colGrayCount[x] / h > 0.8)
-            colIdx.push(x);
-    const rowIdx = [];
-    for (let y = 0; y < h; y++)
-        if (rowGrayCount[y] / w > 0.85)
-            rowIdx.push(y);
-    if (!colIdx.length || !rowIdx.length) {
+    // Try progressively looser coverage requirements rather than one fixed cutoff — a
+    // slightly rotated screenshot, a border partly covered by a text descender, or a
+    // lower-contrast theme can knock a real gridline below any single hard threshold.
+    // Stop as soon as a threshold yields a plausible table (>=4 columns, >=2 rows);
+    // otherwise keep the best (loosest) attempt so the caller still gets a specific,
+    // actionable "not enough columns/rows" error instead of a blanket failure.
+    const THRESHOLDS = [0.82, 0.68, 0.55, 0.42];
+    let cols = null, rows = null;
+    for (const t of THRESHOLDS) {
+        const colIdx = [];
+        for (let x = 0; x < w; x++)
+            if (colScore[x] / h > t)
+                colIdx.push(x);
+        const rowIdx = [];
+        for (let y = 0; y < h; y++)
+            if (rowScore[y] / w > t)
+                rowIdx.push(y);
+        if (!colIdx.length || !rowIdx.length)
+            continue;
+        cols = groupIndices(colIdx, 10);
+        rows = groupIndices(rowIdx, 10);
+        if (cols.length >= 5 && rows.length >= 3)
+            break;
+    }
+    if (!cols || !rows) {
         throw new Error('Could not detect a gridded table in this image. Use a screenshot of the full bordered battle-report table.');
     }
-    const cols = groupIndices(colIdx, 10);
-    const rows = groupIndices(rowIdx, 10);
     if (cols[0] > 10)
         cols.unshift(0);
     if (cols[cols.length - 1] < w - 10)
@@ -3938,37 +4160,73 @@ function cellHasInk(cellCanvas) {
     }
     return (darkPixels / totalPixels) > 0.01;
 }
+// Target confidence (Tesseract's own 0-100 score) below which a cell is worth a second,
+// more aggressive attempt rather than just accepting whatever came back first.
+const OCR_CONFIDENCE_TARGET = 70;
+async function recognizeBest(worker, cellCanvas, psms, whitelist) {
+    let best = { text: '', confidence: -1 };
+    for (const psm of psms) {
+        await worker.setParameters({ tessedit_pageseg_mode: psm, tessedit_char_whitelist: whitelist });
+        const { data } = await worker.recognize(cellCanvas);
+        const conf = typeof data.confidence === 'number' ? data.confidence : 0;
+        if ((data.text || '').trim() !== '' && conf > best.confidence)
+            best = { text: data.text, confidence: conf };
+        if (best.confidence >= OCR_CONFIDENCE_TARGET)
+            break;
+    }
+    return best;
+}
 async function ocrNumericCell(worker, cellCanvas) {
     if (!cellCanvas)
-        return '0';
-    for (const psm of ['6', '7', '8']) {
-        await worker.setParameters({ tessedit_pageseg_mode: psm, tessedit_char_whitelist: OCR_NUMERIC_WHITELIST });
-        const { data } = await worker.recognize(cellCanvas);
-        const digits = (data.text || '').replace(/[^0-9]/g, '');
-        if (digits !== '')
-            return digits;
+        return { value: '0', confidence: 100 };
+    let best = await recognizeBest(worker, cellCanvas, ['7', '8', '6'], OCR_NUMERIC_WHITELIST);
+    // Weak result on the plain upscaled cell — escalate to an Otsu-binarized version
+    // before settling. This is what actually rescues most of the previously-unreadable
+    // cells: faint text, a background tint, or jpeg noise confuses Tesseract's own
+    // thresholding, but a clean forced black/white pass often reads perfectly.
+    if (best.confidence < OCR_CONFIDENCE_TARGET) {
+        const binBest = await recognizeBest(worker, binarizeCanvas(cellCanvas), ['7', '8', '6'], OCR_NUMERIC_WHITELIST);
+        if (binBest.confidence > best.confidence)
+            best = binBest;
     }
+    const digits = (best.text || '').replace(/[^0-9]/g, '');
+    if (digits !== '')
+        return { value: digits, confidence: best.confidence };
     if (cellHasInk(cellCanvas))
-        return null;
-    return '0';
+        return { value: null, confidence: 0 };
+    return { value: '0', confidence: 100 };
 }
 async function ocrTextCell(worker, cellCanvas) {
     if (!cellCanvas)
-        return '';
-    for (const psm of ['6', '7', '13']) {
-        await worker.setParameters({ tessedit_pageseg_mode: psm, tessedit_char_whitelist: OCR_TEXT_WHITELIST });
-        const { data } = await worker.recognize(cellCanvas);
-        const txt = (data.text || '').replace(/\s+/g, ' ').trim();
-        if (txt !== '')
-            return txt;
+        return { value: '', confidence: 100 };
+    let best = await recognizeBest(worker, cellCanvas, ['7', '6', '13'], OCR_TEXT_WHITELIST);
+    if (best.confidence < OCR_CONFIDENCE_TARGET) {
+        const binBest = await recognizeBest(worker, binarizeCanvas(cellCanvas), ['7', '6', '13'], OCR_TEXT_WHITELIST);
+        if (binBest.confidence > best.confidence)
+            best = binBest;
     }
-    return '';
+    const txt = (best.text || '').replace(/\s+/g, ' ').trim();
+    return { value: txt, confidence: txt ? best.confidence : 0 };
 }
-class OcrRequiredCellError extends Error {
-    constructor(rowNumber, fieldLabel) {
-        super(`Could not read the "${fieldLabel}" cell in data row ${rowNumber} of the table - OCR returned no trustworthy value for it after every retry. Refusing to guess a placeholder; please retry with a sharper/higher-resolution screenshot (or crop tighter around the table) and re-convert.`);
-        this.name = 'OcrRequiredCellError';
-    }
+const KNOWN_HEADER_KEYS = Object.keys(HEADER_FIELD_MAP);
+function matchHeaderField(rawLabel) {
+    const normalized = normalizeHeaderLabel(rawLabel);
+    if (HEADER_FIELD_MAP[normalized])
+        return HEADER_FIELD_MAP[normalized];
+    // Exact normalized match failed — OCR garbled a character or two ("Kilis", "Deatns").
+    // Fuzzy-match against the known header vocabulary rather than dropping the column
+    // into "extra/unrecognized", which previously meant one bad header character could
+    // silently lose an entire stats column.
+    const found = closestByLevenshtein(normalized, KNOWN_HEADER_KEYS, Math.max(1, Math.floor(normalized.length * 0.3)));
+    return found ? HEADER_FIELD_MAP[found.match] : null;
+}
+function collectKnownPlayerNames() {
+    const names = new Set();
+    state.reports.forEach(rep => (rep.players || []).forEach(p => { if (p.name)
+        names.add(p.name); }));
+    Object.keys(NAME_ALIASES).forEach(k => names.add(k));
+    Object.values(NAME_ALIASES).forEach(v => names.add(v));
+    return [...names];
 }
 async function parseBattleReportFromGrid(canvas, workerPool, onProgress) {
     const { cols, rows } = detectTableGrid(canvas);
@@ -3981,9 +4239,9 @@ async function parseBattleReportFromGrid(canvas, workerPool, onProgress) {
     const rawHeaderForColumn = new Array(nCols).fill('');
     for (let c = 0; c < nCols; c++) {
         const cell = cropCellCanvas(canvas, cols[c], cols[c + 1], rows[0], rows[1]);
-        const label = await ocrTextCell(workerPool[0], cell);
+        const { value: label } = await ocrTextCell(workerPool[0], cell);
         rawHeaderForColumn[c] = label;
-        fieldForColumn[c] = HEADER_FIELD_MAP[normalizeHeaderLabel(label)] || null;
+        fieldForColumn[c] = matchHeaderField(label);
     }
     const foundFields = new Set(fieldForColumn.filter(Boolean));
     if (!foundFields.has('name') || foundFields.size < 6) {
@@ -4003,6 +4261,9 @@ async function parseBattleReportFromGrid(canvas, workerPool, onProgress) {
     const totalCells = tasks.length;
     let done = 0;
     let nextTask = 0;
+    // Cells that come back genuinely unreadable are no longer a hard abort for the whole
+    // conversion — they're flagged (missing/low-confidence) and left for the review table
+    // instead, so one stubborn cell doesn't force a full re-shoot of the screenshot.
     async function runWorker(worker) {
         while (true) {
             const taskIdx = nextTask++;
@@ -4012,60 +4273,202 @@ async function parseBattleReportFromGrid(canvas, workerPool, onProgress) {
             const field = fieldForColumn[c];
             const isText = field ? TEXT_FIELDS.has(field) : false;
             const cell = cropCellCanvas(canvas, cols[c], cols[c + 1], rows[r], rows[r + 1], { tight: !isText });
-            const value = isText ? await ocrTextCell(worker, cell) : await ocrNumericCell(worker, cell);
-            if (isText && value === '') {
-                throw new OcrRequiredCellError(r, rawHeaderForColumn[c] || field);
-            }
-            if (!isText && value === null) {
-                throw new OcrRequiredCellError(r, rawHeaderForColumn[c] || field || `Column ${c + 1}`);
-            }
-            results[taskIdx] = value;
+            results[taskIdx] = isText ? await ocrTextCell(worker, cell) : await ocrNumericCell(worker, cell);
             done++;
             if (onProgress)
                 onProgress(done, totalCells);
         }
     }
     await Promise.all(workerPool.map(w => runWorker(w)));
+    const knownNames = collectKnownPlayerNames();
     const players = [];
     for (let r = 1; r < nRows; r++) {
         const rowVals = {};
+        const rowConf = {};
         const extra = {};
+        let rowHasAnyContent = false;
         for (let c = 0; c < nCols; c++) {
-            const value = results[(r - 1) * nCols + c];
+            const { value, confidence } = results[(r - 1) * nCols + c] || { value: '', confidence: 0 };
             const field = fieldForColumn[c];
-            if (field)
+            if (value !== '' && value !== null)
+                rowHasAnyContent = true;
+            if (field) {
                 rowVals[field] = value;
-            else
+                rowConf[field] = confidence;
+            }
+            else {
                 extra[rawHeaderForColumn[c] || `Column ${c + 1}`] = value;
+            }
         }
-        if (!rowVals.name)
-            continue;
-        if (/^name$/i.test(rowVals.name) || /^profession$/i.test(rowVals.name))
-            continue;
-        if (!rowVals.profession)
-            throw new OcrRequiredCellError(r, 'Profession');
-        if (!rowVals.faction)
-            throw new OcrRequiredCellError(r, 'Faction');
+        if (!rowHasAnyContent)
+            continue; // fully blank row — a stray gridline artifact, not a missing player
+        if (/^name$/i.test(rowVals.name || '') || /^profession$/i.test(rowVals.name || ''))
+            continue; // a repeated header row the grid detector mistook for data
+        const missing = [];
+        TEXT_FIELDS.forEach(f => { if (!rowVals[f])
+            missing.push(f); });
+        Object.keys(HEADER_FIELD_MAP).forEach(k => {
+            const f = HEADER_FIELD_MAP[k];
+            if (!TEXT_FIELDS.has(f) && rowVals[f] == null)
+                missing.push(f);
+        });
+        const name = rowVals.name || '';
+        const nameSuggestion = name ? closestByLevenshtein(name, knownNames) : null;
+        const damage = cleanOcrNumber(rowVals.damage);
+        const healing = cleanOcrNumber(rowVals.healing);
+        const implausible = [];
+        if (damage > MAX_PLAUSIBLE_DAMAGE)
+            implausible.push('damage');
+        if (healing > MAX_PLAUSIBLE_HEALING)
+            implausible.push('healing');
         players.push({
-            name: rowVals.name,
-            profession: rowVals.profession,
-            faction: rowVals.faction,
+            name, profession: rowVals.profession || '', faction: rowVals.faction || '',
             kills: cleanOcrNumber(rowVals.kills),
             assists: cleanOcrNumber(rowVals.assists),
             deaths: cleanOcrNumber(rowVals.deaths),
-            damage: cleanOcrNumber(rowVals.damage),
+            damage,
             largestHit: cleanOcrNumber(rowVals.largestHit),
             damageTaken: cleanOcrNumber(rowVals.damageTaken),
-            healing: cleanOcrNumber(rowVals.healing),
+            healing,
             largestHeal: cleanOcrNumber(rowVals.largestHeal),
             captures: cleanOcrNumber(rowVals.captures),
-            extra
+            extra,
+            _ocr: { confidence: rowConf, missing, implausible, nameSuggestion }
         });
     }
     if (!players.length)
         throw new Error('Detected the table grid but could not extract any player rows.');
     return { players, extraColumnLabels: [...new Set(extraColumnLabels)] };
 }
+const REVIEW_FIELD_ORDER = ['name', 'profession', 'faction', 'kills', 'assists', 'deaths', 'damage', 'largestHit', 'damageTaken', 'healing', 'largestHeal', 'captures'];
+const REVIEW_FIELD_LABELS = { name: 'Name', profession: 'Profession', faction: 'Faction', kills: 'Kills', assists: 'Assists', deaths: 'Deaths', damage: 'Damage', largestHit: 'Largest Hit', damageTaken: 'Dmg Taken', healing: 'Healing', largestHeal: 'Largest Heal', captures: 'Captures' };
+let currentOcrReview = null; // { players, extraColumnLabels, sourceFilename }
+function ocrInputClass(player, field) {
+    const ocr = player._ocr || {};
+    if ((ocr.implausible || []).includes(field) || (ocr.missing || []).includes(field))
+        return 'ocr-implausible';
+    const conf = ocr.confidence ? ocr.confidence[field] : null;
+    if (typeof conf === 'number' && conf < OCR_CONFIDENCE_TARGET)
+        return 'ocr-low-conf';
+    return '';
+}
+function renderOcrReviewTable() {
+    const table = document.getElementById('ocrReviewTable');
+    const review = document.getElementById('ocrReview');
+    if (!currentOcrReview || !currentOcrReview.players.length) {
+        review.style.display = 'none';
+        table.innerHTML = '';
+        return;
+    }
+    review.style.display = 'block';
+    const extraLabels = currentOcrReview.extraColumnLabels || [];
+    const headCells = ['#', ...REVIEW_FIELD_ORDER.map(f => REVIEW_FIELD_LABELS[f]), ...extraLabels, ''];
+    let html = '<thead><tr>' + headCells.map(h => `<th>${htmlEscape(h)}</th>`).join('') + '</tr></thead><tbody>';
+    currentOcrReview.players.forEach((p, i) => {
+        html += `<tr><td class="ocr-row-num">${i + 1}</td>`;
+        REVIEW_FIELD_ORDER.forEach(field => {
+            const cls = ocrInputClass(p, field);
+            const val = p[field] == null ? '' : p[field];
+            html += `<td><input data-row="${i}" data-field="${field}" class="${cls}" value="${htmlEscape(val)}">`;
+            if (field === 'name' && p._ocr && p._ocr.nameSuggestion)
+                html += `<div class="ocr-name-suggest" data-row="${i}" data-apply-suggestion="${htmlEscape(p._ocr.nameSuggestion.match)}">did you mean "${htmlEscape(p._ocr.nameSuggestion.match)}"?</div>`;
+            html += '</td>';
+        });
+        extraLabels.forEach(label => {
+            const val = (p.extra || {})[label];
+            html += `<td><input data-row="${i}" data-extra="${htmlEscape(label)}" value="${htmlEscape(val == null ? '' : val)}"></td>`;
+        });
+        html += `<td><button type="button" class="ocr-review-remove" data-remove-row="${i}" title="Remove this row">✕</button></td></tr>`;
+    });
+    html += '</tbody>';
+    table.innerHTML = html;
+}
+function rebuildConvertedReportFromReviewState() {
+    if (!currentOcrReview) {
+        convertedReportHtml = '';
+        convertedReportFile = null;
+        downloadConvertedHtml.disabled = true;
+        uploadConvertedHtml.disabled = true;
+        return;
+    }
+    const players = currentOcrReview.players.map(p => ({
+        ...p,
+        kills: cleanOcrNumber(p.kills), assists: cleanOcrNumber(p.assists), deaths: cleanOcrNumber(p.deaths),
+        damage: cleanOcrNumber(p.damage), largestHit: cleanOcrNumber(p.largestHit), damageTaken: cleanOcrNumber(p.damageTaken),
+        healing: cleanOcrNumber(p.healing), largestHeal: cleanOcrNumber(p.largestHeal), captures: cleanOcrNumber(p.captures)
+    }));
+    convertedReportHtml = buildStandardBattleReportHtml(players, 'BATTLEFIELD OVER', currentOcrReview.extraColumnLabels);
+    convertedReportFile = new File([convertedReportHtml], (currentOcrReview.sourceFilename || 'BATTLEFIELD_OVER') + '.html', { type: 'text/html' });
+    downloadConvertedHtml.disabled = false;
+    uploadConvertedHtml.disabled = false;
+    const flaggedCount = currentOcrReview.players.filter(p => {
+        const ocr = p._ocr || {};
+        return (ocr.missing && ocr.missing.length) || (ocr.implausible && ocr.implausible.length);
+    }).length;
+    setOcrStatus(`Converted ${players.length} player${players.length === 1 ? '' : 's'}.` +
+        (flaggedCount ? ` ${flaggedCount} row${flaggedCount === 1 ? '' : 's'} highlighted below — check those before uploading.` : ' Nothing flagged — review below, then download or upload.'), flaggedCount ? 'err' : 'ok');
+}
+document.getElementById('ocrReviewTable').addEventListener('input', (e) => {
+    const target = e.target;
+    if (!target.matches('input') || !currentOcrReview)
+        return;
+    const row = parseInt(target.dataset.row, 10);
+    const player = currentOcrReview.players[row];
+    if (!player)
+        return;
+    if (target.dataset.field) {
+        const field = target.dataset.field;
+        player[field] = target.value;
+        const ocr = player._ocr || (player._ocr = { confidence: {}, missing: [], implausible: [], nameSuggestion: null });
+        ocr.missing = (ocr.missing || []).filter(f => f !== field);
+        if (field === 'damage' || field === 'healing') {
+            const n = cleanOcrNumber(target.value);
+            const limit = field === 'damage' ? MAX_PLAUSIBLE_DAMAGE : MAX_PLAUSIBLE_HEALING;
+            ocr.implausible = (ocr.implausible || []).filter(f => f !== field);
+            if (n > limit)
+                ocr.implausible.push(field);
+        }
+        if (field === 'name') {
+            ocr.nameSuggestion = null;
+            const hint = target.parentElement.querySelector('.ocr-name-suggest');
+            if (hint)
+                hint.remove();
+        }
+        target.className = ocrInputClass(player, field);
+    }
+    else if (target.dataset.extra) {
+        player.extra = player.extra || {};
+        player.extra[target.dataset.extra] = target.value;
+    }
+    rebuildConvertedReportFromReviewState();
+});
+document.getElementById('ocrReviewTable').addEventListener('click', (e) => {
+    if (!currentOcrReview)
+        return;
+    const sugg = e.target.closest('[data-apply-suggestion]');
+    if (sugg) {
+        const row = parseInt(sugg.dataset.row, 10);
+        const player = currentOcrReview.players[row];
+        if (!player)
+            return;
+        player.name = sugg.dataset.applySuggestion;
+        if (player._ocr)
+            player._ocr.nameSuggestion = null;
+        const input = document.querySelector(`#ocrReviewTable input[data-row="${row}"][data-field="name"]`);
+        if (input)
+            input.value = player.name;
+        sugg.remove();
+        rebuildConvertedReportFromReviewState();
+        return;
+    }
+    const removeBtn = e.target.closest('[data-remove-row]');
+    if (removeBtn) {
+        const row = parseInt(removeBtn.dataset.removeRow, 10);
+        currentOcrReview.players.splice(row, 1);
+        renderOcrReviewTable();
+        rebuildConvertedReportFromReviewState();
+    }
+});
 async function convertImageToBattleHtml(file) {
     if (!window.Tesseract)
         throw new Error('OCR engine could not be loaded. Check your internet connection and reload the page.');
@@ -4084,11 +4487,9 @@ async function convertImageToBattleHtml(file) {
             ocrProgressBar.style.width = Math.round((done / total) * 100) + '%';
             setOcrStatus(`Reading battle-report cells… ${done}/${total}`);
         });
-        convertedReportHtml = buildStandardBattleReportHtml(players, 'BATTLEFIELD OVER', extraColumnLabels);
-        convertedReportFile = new File([convertedReportHtml], (file.name.replace(/\.[^.]+$/, '') || 'BATTLEFIELD_OVER') + '.html', { type: 'text/html' });
-        downloadConvertedHtml.disabled = false;
-        uploadConvertedHtml.disabled = false;
-        setOcrStatus(`Converted ${players.length} player${players.length === 1 ? '' : 's'} to standard BATTLEFIELD_OVER.html format.`, 'ok');
+        currentOcrReview = { players, extraColumnLabels, sourceFilename: file.name.replace(/\.[^.]+$/, '') || 'BATTLEFIELD_OVER' };
+        renderOcrReviewTable();
+        rebuildConvertedReportFromReviewState();
         return convertedReportFile;
     }
     finally {
@@ -4105,6 +4506,8 @@ async function handleImageFile(file) {
     uploadConvertedHtml.disabled = true;
     convertedReportHtml = '';
     convertedReportFile = null;
+    currentOcrReview = null;
+    renderOcrReviewTable();
     try {
         await convertImageToBattleHtml(file);
     }
