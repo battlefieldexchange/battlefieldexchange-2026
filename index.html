@@ -631,7 +631,7 @@
 
   <div id="viewElo" class="hidden">
     <section class="panel">
-      <div class="panel-head"><h2>Elo Distribution</h2><span class="sub">faction win/loss, scaled by role-relative performance across every battle report — click a player to see their other classes under that name</span></div>
+      <div class="panel-head"><h2>Elo Distribution</h2><span class="sub">faction win/loss, scaled by role-relative performance across every battle report — click a player to see their classes and a battle-by-battle stat log under that name</span></div>
       <div class="panel-body">
         <div class="elo-summary" id="eloSummary"></div>
         <div class="chart-wrap" style="padding:0 0 18px;">
@@ -3711,7 +3711,34 @@ function renderClassBreakdownHtml(name) {
         + '<div class="class-expand-meta">' + info.battles + ' report' + (info.battles !== 1 ? 's' : '') + ' · ' + range
         + (info.classes.length > 1 ? ' · ' + info.classes.length + ' classes played' : '') + '</div>'
         + info.classes.map(c => '<div class="class-row"><span class="cls-pill" style="color:' + classColor(c.cls) + '">' + escapeHtml(c.cls) + '</span><span class="count">' + c.count + ' report' + (c.count !== 1 ? 's' : '') + '</span></div>').join('')
+        + renderBattleLogHtml(name)
         + '</div>';
+}
+function renderBattleLogHtml(name) {
+    const p = state.players[name];
+    const rows = (p && p.history) ? [...p.history].sort((a, b) => b.day - a.day) : [];
+    if (!rows.length)
+        return '';
+    const fmtNum = n => Number(n || 0).toLocaleString();
+    const totals = rows.reduce((t, r) => {
+        t.damage += r.damage || 0; t.healing += r.healing || 0;
+        t.kills += r.kills || 0; t.assists += r.assists || 0; t.deaths += r.deaths || 0;
+        return t;
+    }, { damage: 0, healing: 0, kills: 0, assists: 0, deaths: 0 });
+    return '<div class="class-expand-meta" style="margin-top:14px;">Battle log — totals: '
+        + fmtNum(totals.damage) + ' dmg · ' + fmtNum(totals.healing) + ' heal · '
+        + totals.kills + 'K / ' + totals.assists + 'A / ' + totals.deaths + 'D</div>'
+        + '<table class="history"><thead><tr><th>Day</th><th>Class</th><th>Damage</th><th>Healing</th><th>Kills</th><th>Assists</th><th>Deaths</th></tr></thead><tbody>'
+        + rows.map(r => '<tr>'
+            + '<td>Day ' + r.day + '</td>'
+            + '<td><span class="cls-pill" style="color:' + classColor(r.profession) + '">' + escapeHtml(r.profession || 'Unknown') + '</span></td>'
+            + '<td>' + fmtNum(r.damage) + '</td>'
+            + '<td>' + fmtNum(r.healing) + '</td>'
+            + '<td>' + fmtNum(r.kills) + '</td>'
+            + '<td>' + fmtNum(r.assists) + '</td>'
+            + '<td>' + fmtNum(r.deaths) + '</td>'
+            + '</tr>').join('')
+        + '</tbody></table>';
 }
 let networthCache = null;
 const NETWORTH_CACHE_MS = 120000;
