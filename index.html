@@ -1447,7 +1447,7 @@ async function republishLatestPriceSnapshot() {
     const latest = [...state.reports].sort((a, b) => b.day - a.day)[0];
     const priceMap = buildLatestPriceMap();
     const freshRef = doc(collection(db, 'pricesByReport'));
-    await setDoc(freshRef, { reportId: latest.id, day: latest.day, prices: priceMap, resyncOf: latest.id, resyncedAt: serverTimestamp() });
+    await setDoc(freshRef, { reportId: freshRef.id, day: latest.day, prices: priceMap, resyncOf: latest.id, resyncedAt: serverTimestamp() });
     await setDoc(doc(db, 'market', 'latestReportId'), { reportId: freshRef.id, day: latest.day });
     return true;
 }
