@@ -419,7 +419,7 @@
             <input type="number" id="dbgJumpDay" min="0" step="1">
             <button class="debug-btn" id="dbgJumpBtn">Go</button>
           </div>
-          <div class="admin-note" style="margin-top:16px;">Price scale — changing these and hitting Recalculate reprices every stock for <b>every connected trader</b> immediately. Stock price is a direct read of each player's current Elo <b>rank</b> that day (see the Elo Distribution tab) — no day-over-day compounding, no separate weight set to tune. The middle-ranked player prices at "Median"; the single top-ranked player's price approaches (but never quite reaches) "Top price" as more players are tracked. Because this is rank-based, not raw-Elo-based, it can't blow up no matter how large the actual Elo gap between players gets. Only visible/editable here, admin-only server-side too.</div>
+          <div class="admin-note" style="margin-top:16px;">Price scale — changing these and hitting Recalculate reprices every stock for <b>every connected trader</b> immediately. Stock price is a direct read of how many standard deviations above or below the <b>average</b> current Elo each player sits (see the Elo Distribution tab's "How is this calculated?" for the full formula) — no day-over-day compounding, no separate weight set to tune. A dead-average player prices at "Median"; a player `spread` standard deviations above average prices at "Top price" (a reference point, not a hard cap — further above that keeps climbing on the same line). Below average, price falls the same way per standard deviation down to a $0.01 floor. Only visible/editable here, admin-only server-side too.</div>
           <div class="weight-row"><label>Median price</label><input type="number" step="1" id="pMedian" style="width:100%"><span></span></div>
           <div class="weight-row"><label>Reference top price (at `spread` std-devs above average — not a cap)</label><input type="number" step="1" id="pTop" style="width:100%"><span></span></div>
           <div class="weight-row"><label>Spread — std. deviations of edge from median price to top price</label><input type="number" step="0.1" min="0.5" id="pSpread" style="width:100%"><span></span></div>
@@ -428,6 +428,9 @@
           <div class="admin-note" style="margin-top:16px;">If buy/sell prices ever look out of sync with what's shown on screen (e.g. the confirm step wants far more or less cash than the displayed price implies) — that means a weight change or name merge happened without a report since. This forces the trade-time price snapshot to match the current display right now, without changing any settings.</div>
           <button class="debug-btn" id="dbgForceResync">Force resync buy/sell prices now</button>
           <div class="msg" id="resyncMsg"></div>
+          <div class="admin-note" style="margin-top:16px;">If buy or sell fails with "Missing or insufficient permissions" and Force resync above doesn't fix it, this checks the actual published price data directly — whether the pointer and its price snapshot exist, and which currently-tradeable symbols (if any) are missing a canonical price. Read-only, changes nothing.</div>
+          <button class="debug-btn" id="dbgDiagnosePriceData">Diagnose missing canonical price data</button>
+          <div id="priceDiagResults" style="margin-top:10px; font-size:12px; color:var(--text-dim); white-space:pre-line;"></div>
           <div class="admin-note" style="margin-top:16px;">If options/writes fail with "Missing or insufficient permissions" (stock trading unaffected): tests whether your positions security rule was updated for the newer option/write fields (side, strike, expiryDay, premium, settlePrice) alongside the older stock-only shape. Writes disposable, zero-value test positions under your own account and deletes each immediately; your real cash and positions are never touched.</div>
           <button class="debug-btn" id="dbgDiagnoseTradePerms">Diagnose option/write trade permission error</button>
           <div id="tradeDiagResults" style="margin-top:10px; font-size:12px; color:var(--text-dim); white-space:pre-line;"></div>
@@ -633,6 +636,20 @@
     <section class="panel">
       <div class="panel-head"><h2>Elo Distribution</h2><span class="sub">faction win/loss, scaled by role-relative performance across every battle report — click a player to see their classes and a battle-by-battle stat log under that name</span></div>
       <div class="panel-body">
+        <details class="admin-note" id="eloFormulaExplainer" style="padding:10px 12px;">
+          <summary style="cursor:pointer; color:var(--phosphor);">How is this calculated? (the Elo → price formula)</summary>
+          <div style="margin-top:10px;">
+            <b>Elo.</b> Everyone starts at 1500. After each battle report:
+            <ul style="margin:6px 0 10px 18px; padding:0;">
+              <li>Your faction's result that battle is whichever side had fewer total deaths (a tie on deaths is a draw). In a battle with more than two factions, there's no single win/loss — instead every player is compared head-to-head against every other player in the report using individual performance (below), and rated against all of them at once.</li>
+              <li>Your rating moves by the standard chess-style Elo formula: how much your team over- or under-performed what your Elo, versus the enemy team's average Elo, predicted.</li>
+              <li>How far a single battle can move you shrinks as you play more: up to 40 points for your first 9 battles, 24 up to your 30th, 16 after that — so new players settle in fast and veterans move gradually.</li>
+              <li>Your own performance that battle scales the swing up or down by up to 40% either way. It's role-relative: each of damage, healing, kills, assists and deaths is compared to <i>other players in the same class in that same battle</i>, not the whole field — so a Medic is judged mostly on healing/deaths/assists, everyone else mostly on damage/deaths/assists. Playing well cushions a loss; playing badly shrinks a win.</li>
+              <li>A lopsided result (a much bigger death-count gap between the two sides) moves ratings up to 50% more than a close one.</li>
+            </ul>
+            <b>Price.</b> After every report, your price is recomputed fresh from where your Elo sits <i>relative to every other currently-tracked player</i> — specifically, how many standard deviations above or below the average Elo you are right now. That's converted to a price on a straight line: dead-average Elo prices at <span id="eloFormulaMedian">$100</span>, and <span id="eloFormulaSpread">3</span> standard deviations above average prices at <span id="eloFormulaTop">$10,000</span> (the ceiling — Elo further above that doesn't add more). Below average, price falls the same way each standard deviation, down to a floor of $0.01 — since the line is straight and floored rather than curved, it's possible for a fair number of players to end up bunched at that floor if the market's Elo spread is narrow relative to the median/top gap. This whole formula recomputes for <i>everyone</i> whenever new reports come in or an admin changes the price-scale settings, so your price reflects your standing in the current field, not just your own history.
+          </div>
+        </details>
         <div class="elo-summary" id="eloSummary"></div>
         <div class="chart-wrap" style="padding:0 0 18px;">
           <canvas id="eloChart" height="130"></canvas>
@@ -687,6 +704,12 @@ const state = {
     selectedSymbols: new Set(), tradeType: 'call', tradeSide: 'buy', historyFilter: 'all', assetSymbol: '', tickerSearch: '',
     bets: [], historicalBets: [], myWagers: [], betFilter: 'open'
 };
+// Read-only exposure for external tooling (e.g. the Discord bot's OCR
+// pipeline, which fuzzy-matches its own OCR'd names against the live roster
+// to catch misreads). `state` is a module-scoped binding, invisible outside
+// this script otherwise -- this doesn't change what runs in-page, it just
+// lets something driving the page via Playwright read the current roster.
+window.__bfxState = state;
 const ELO_START = 1500;
 function kFactorFor(battles) {
     if (battles < 10)
@@ -2190,12 +2213,16 @@ function computeMarketFromReports(reportsList) {
                     teamDeltas[r.name] = kFactorFor(ratings[r.name].battles) * (actualB - expected) * mov;
                 });
                 const recordResult = (rowsSide, actual) => rowsSide.forEach(r => {
+                    const result = actual === 1 ? 'win' : (actual === 0 ? 'loss' : 'draw');
                     if (actual === 1)
                         ratings[r.name].wins += 1;
                     else if (actual === 0)
                         ratings[r.name].losses += 1;
                     else
                         ratings[r.name].draws += 1;
+                    const hist = players[r.name].history;
+                    if (hist.length)
+                        hist[hist.length - 1].result = result;
                 });
                 recordResult(rowsA, actualA);
                 recordResult(rowsB, actualB);
@@ -2234,6 +2261,9 @@ function recomputeMarket() {
     const { players, ratings } = computeMarketFromReports(state.reports);
     state.players = players;
     state.elo = ratings;
+    const profSet = new Set();
+    Object.values(players).forEach(p => (p.history || []).forEach(h => profSet.add(normProf(h.profession))));
+    KNOWN_PROFESSIONS_SORTED = Array.from(profSet).sort();
 }
 function currentPrice(symbol) {
     const p = state.players[symbol];
@@ -2819,6 +2849,46 @@ document.getElementById('dbgForceResync').addEventListener('click', async () => 
         }
     }
 });
+document.getElementById('dbgDiagnosePriceData').addEventListener('click', async () => {
+    if (!state.isAdmin)
+        return;
+    const out = document.getElementById('priceDiagResults');
+    out.textContent = 'Checking published price data…';
+    const lines = [];
+    try {
+        const pointerSnap = await getDoc(doc(db, 'market', 'latestReportId'));
+        if (!pointerSnap.exists()) {
+            lines.push('✗ market/latestReportId does not exist — no report has ever been published, or the pointer was never created. Submit a report, or try Force resync above.');
+            out.textContent = lines.join('\n');
+            return;
+        }
+        const reportId = pointerSnap.data().reportId;
+        lines.push('✓ market/latestReportId exists → points at pricesByReport/' + reportId);
+        const priceSnap = await getDoc(doc(db, 'pricesByReport', String(reportId)));
+        if (!priceSnap.exists()) {
+            lines.push('✗ pricesByReport/' + reportId + ' does NOT exist — the pointer is dangling. This is why canonicalPrice() fails for every symbol, so every buy and sell will be denied. Force resync above should fix this once report data exists locally; if it still fails after that, the pointer likely needs to be repointed at a report that does exist (e.g. by submitting a new report).');
+            out.textContent = lines.join('\n');
+            return;
+        }
+        const prices = priceSnap.data().prices || {};
+        const publishedSymbols = new Set(Object.keys(prices));
+        lines.push('✓ pricesByReport/' + reportId + ' exists, with prices for ' + publishedSymbols.size + ' symbol' + (publishedSymbols.size === 1 ? '' : 's') + '.');
+        const liveSymbols = Object.keys(state.players || {});
+        const missing = liveSymbols.filter(s => !publishedSymbols.has(s));
+        if (missing.length === 0) {
+            lines.push('✓ Every currently-displayed symbol (' + liveSymbols.length + ') has a canonical price. Buy/sell should work for all of them.');
+        }
+        else {
+            lines.push('✗ ' + missing.length + ' of ' + liveSymbols.length + ' currently-displayed symbols have NO canonical price — buying or selling these specifically will fail with "Missing or insufficient permissions":');
+            lines.push(missing.slice(0, 25).join(', ') + (missing.length > 25 ? ', …' : ''));
+            lines.push('Try Force resync above to republish prices for the full current roster.');
+        }
+    }
+    catch (err) {
+        lines.push('Failed: ' + err.message);
+    }
+    out.textContent = lines.join('\n');
+});
 document.getElementById('dbgSaveNameGroup').addEventListener('click', saveNameGroup);
 document.getElementById('nameGroupsList').addEventListener('click', (e) => {
     const canon = e.target?.dataset?.removeGroup;
@@ -3113,6 +3183,27 @@ function classColor(cls) {
         hash = (hash * 31 + s.charCodeAt(i)) >>> 0;
     return CLASS_PALETTE[hash % CLASS_PALETTE.length];
 }
+// Separate from classColor/CLASS_PALETTE above (which stays hash-based for bet outcome
+// bars). Professions get a real one-to-one assignment instead of a hash, so two different
+// classes can never land on the same color. KNOWN_PROFESSIONS_SORTED is refreshed in
+// recomputeMarket() from every profession seen across all history, so the same set of
+// classes always maps to the same colors regardless of report load order.
+const PROFESSION_PALETTE = [
+    '#7fe6da', '#5db0e6', '#e0b34d', '#ff6b5d', '#c792ea', '#7fd1ff', '#ffe066', '#8fd6c8',
+    '#ff9ecd', '#9effa0', '#ffb37f', '#b0a8ff', '#66d9c2', '#f27fa0', '#d1ff7f', '#7f9fff',
+    '#e6c37f', '#7fffe0', '#ff7fb3', '#a0ff7f', '#7fc2ff', '#ffd17f', '#c27fff', '#7fffb3'
+];
+let KNOWN_PROFESSIONS_SORTED = [];
+function professionColor(profession) {
+    const key = normProf(profession);
+    let idx = KNOWN_PROFESSIONS_SORTED.indexOf(key);
+    if (idx === -1)
+        idx = KNOWN_PROFESSIONS_SORTED.length;
+    if (idx < PROFESSION_PALETTE.length)
+        return PROFESSION_PALETTE[idx];
+    const hue = (idx * 137.508) % 360; // golden-angle fallback if there are ever more classes than the palette
+    return 'hsl(' + hue.toFixed(1) + ', 65%, 65%)';
+}
 function fmtMoney(n) { return '$' + Number(n).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 }); }
 let chart = null;
 function renderChart() {
@@ -3168,7 +3259,7 @@ function renderTicker() {
             const vol = volatility(sym);
             return '<tr>'
                 + '<td><div class="sym">' + escapeHtml(sym) + '</div></td>'
-                + '<td><span class="cls-pill" style="color:' + classColor(p.profession) + '">' + escapeHtml(p.profession) + '</span></td>'
+                + '<td><span class="cls-pill" style="color:' + professionColor(p.profession) + '">' + escapeHtml(p.profession) + '</span></td>'
                 + '<td class="price">' + fmtMoney(price) + '</td>'
                 + '<td class="chg ' + chgClass + '">' + arrow + ' ' + (chg >= 0 ? '+' : '') + chg.toFixed(2) + ' (' + chgPct.toFixed(1) + '%)</td>'
                 + '<td style="color:var(--text-dim)">' + (vol * 100).toFixed(0) + '%</td>'
@@ -3597,6 +3688,15 @@ function renderEloTab() {
     const bodyEl = document.getElementById('eloBody');
     if (!summaryEl || !bodyEl)
         return;
+    const medianEl = document.getElementById('eloFormulaMedian');
+    const spreadEl = document.getElementById('eloFormulaSpread');
+    const topEl = document.getElementById('eloFormulaTop');
+    if (medianEl)
+        medianEl.textContent = fmtMoney(PRICE_SCALE_SETTINGS.median);
+    if (spreadEl)
+        spreadEl.textContent = PRICE_SCALE_SETTINGS.spread;
+    if (topEl)
+        topEl.textContent = fmtMoney(PRICE_SCALE_SETTINGS.top);
     const entries = Object.keys(state.elo).map(name => Object.assign({ name }, state.elo[name]));
     entries.sort((a, b) => b.elo - a.elo);
     if (entries.length === 0) {
@@ -3621,7 +3721,7 @@ let expandedEloPlayer = null;
 function buildEloBodyHtml(entries) {
     return entries.map((e, i) => {
         const row = '<tr><td>' + (i + 1) + '</td><td class="sym player-link" data-player="' + escapeHtml(e.name) + '">' + escapeHtml(e.name) + '</td>'
-            + '<td><span class="cls-pill" style="color:' + classColor(e.profession) + '">' + escapeHtml(e.profession || 'Unknown') + '</span></td>'
+            + '<td><span class="cls-pill" style="color:' + professionColor(e.profession) + '">' + escapeHtml(e.profession || 'Unknown') + '</span></td>'
             + '<td class="' + (e.elo >= ELO_START ? 'elo-pos' : 'elo-neg') + '">' + Math.round(e.elo) + '</td>'
             + '<td>' + (e.wins || 0) + '-' + (e.losses || 0) + '-' + (e.draws || 0) + '</td>'
             + '<td>' + e.battles + '</td></tr>';
@@ -3710,7 +3810,7 @@ function renderClassBreakdownHtml(name) {
     return '<div class="class-expand">'
         + '<div class="class-expand-meta">' + info.battles + ' report' + (info.battles !== 1 ? 's' : '') + ' · ' + range
         + (info.classes.length > 1 ? ' · ' + info.classes.length + ' classes played' : '') + '</div>'
-        + info.classes.map(c => '<div class="class-row"><span class="cls-pill" style="color:' + classColor(c.cls) + '">' + escapeHtml(c.cls) + '</span><span class="count">' + c.count + ' report' + (c.count !== 1 ? 's' : '') + '</span></div>').join('')
+        + info.classes.map(c => '<div class="class-row"><span class="cls-pill" style="color:' + professionColor(c.cls) + '">' + escapeHtml(c.cls) + '</span><span class="count">' + c.count + ' report' + (c.count !== 1 ? 's' : '') + '</span></div>').join('')
         + renderBattleLogHtml(name)
         + '</div>';
 }
@@ -3725,13 +3825,23 @@ function renderBattleLogHtml(name) {
         t.kills += r.kills || 0; t.assists += r.assists || 0; t.deaths += r.deaths || 0;
         return t;
     }, { damage: 0, healing: 0, kills: 0, assists: 0, deaths: 0 });
+    const resultCell = r => {
+        if (r.result === 'win')
+            return '<span class="win-text">Win</span>';
+        if (r.result === 'loss')
+            return '<span class="loss-text">Loss</span>';
+        if (r.result === 'draw')
+            return '<span style="color:var(--text-dim)">Draw</span>';
+        return '<span style="color:var(--text-dim)">—</span>';
+    };
     return '<div class="class-expand-meta" style="margin-top:14px;">Battle log — totals: '
         + fmtNum(totals.damage) + ' dmg · ' + fmtNum(totals.healing) + ' heal · '
         + totals.kills + 'K / ' + totals.assists + 'A / ' + totals.deaths + 'D</div>'
-        + '<table class="history"><thead><tr><th>Day</th><th>Class</th><th>Damage</th><th>Healing</th><th>Kills</th><th>Assists</th><th>Deaths</th></tr></thead><tbody>'
+        + '<table class="history"><thead><tr><th>Day</th><th>Class</th><th>Result</th><th>Damage</th><th>Healing</th><th>Kills</th><th>Assists</th><th>Deaths</th></tr></thead><tbody>'
         + rows.map(r => '<tr>'
             + '<td>Day ' + r.day + '</td>'
-            + '<td><span class="cls-pill" style="color:' + classColor(r.profession) + '">' + escapeHtml(r.profession || 'Unknown') + '</span></td>'
+            + '<td><span class="cls-pill" style="color:' + professionColor(r.profession) + '">' + escapeHtml(r.profession || 'Unknown') + '</span></td>'
+            + '<td>' + resultCell(r) + '</td>'
             + '<td>' + fmtNum(r.damage) + '</td>'
             + '<td>' + fmtNum(r.healing) + '</td>'
             + '<td>' + fmtNum(r.kills) + '</td>'
