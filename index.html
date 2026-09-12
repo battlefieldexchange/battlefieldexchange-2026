@@ -4148,58 +4148,47 @@ function binarizeCanvas(sourceCanvas) {
 function detectTableGrid(canvas) {
     const w = canvas.width, h = canvas.height;
     const { data } = canvas.getContext('2d').getImageData(0, 0, w, h);
-    // Luminance-weighted grayscale + contrast-against-the-image's-own-average, rather
-    // than the old "near-neutral gray and darker than a fixed value" check. That old
-    // check only ever found dark-gray lines on a light background; it was blind to
-    // colored/tinted borders and to dark-themed screenshots (light lines on dark bg),
-    // both common in game UI. Contrast against the image's own mean brightness works
-    // for either direction and either hue.
-    const gray = new Float32Array(w * h);
-    let sum = 0;
-    for (let i = 0, p = 0; i < data.length; i += 4, p++) {
-        const l = 0.299 * data[i] + 0.587 * data[i + 1] + 0.114 * data[i + 2];
-        gray[p] = l;
-        sum += l;
-    }
-    const mean = sum / gray.length;
-    const colScore = new Float64Array(w);
-    const rowScore = new Float64Array(h);
+    // Reverted to the near-neutral-gray-and-dark check (see cell 2026-09 postmortem):
+    // the "contrast against the image's own mean brightness" version this replaced was
+    // meant to generalize to colored/dark-theme borders, but in practice it misfires on
+    // real report screenshots — a wide block of light/mid-tone alternating row shading
+    // can itself differ from the image's average by more than the threshold across its
+    // *entire* width, so whole row/column bodies get misread as gridline material and
+    // merge with their own border into one oversized, wrongly-cropped blob. This version
+    // only ever counts pixels that are BOTH dark and close to neutral gray (R≈G≈B) —
+    // a much more specific definition of "this is a black border line" that a solid
+    // background color, however far from the image average, can't satisfy, and that
+    // colored faction text can't satisfy either.
+    const colGrayCount = new Float64Array(w);
+    const rowGrayCount = new Float64Array(h);
     for (let y = 0; y < h; y++) {
-        const rowBase = y * w;
+        const rowBase = y * w * 4;
         for (let x = 0; x < w; x++) {
-            if (Math.abs(gray[rowBase + x] - mean) > 35) {
-                colScore[x]++;
-                rowScore[y]++;
+            const i = rowBase + x * 4;
+            const r = data[i], g = data[i + 1], b = data[i + 2];
+            if (Math.abs(r - g) < 10 && Math.abs(g - b) < 10 && r < 200) {
+                colGrayCount[x]++;
+                rowGrayCount[y]++;
             }
         }
     }
-    // Try progressively looser coverage requirements rather than one fixed cutoff — a
-    // slightly rotated screenshot, a border partly covered by a text descender, or a
-    // lower-contrast theme can knock a real gridline below any single hard threshold.
-    // Stop as soon as a threshold yields a plausible table (>=4 columns, >=2 rows);
-    // otherwise keep the best (loosest) attempt so the caller still gets a specific,
-    // actionable "not enough columns/rows" error instead of a blanket failure.
-    const THRESHOLDS = [0.82, 0.68, 0.55, 0.42];
-    let cols = null, rows = null;
-    for (const t of THRESHOLDS) {
-        const colIdx = [];
-        for (let x = 0; x < w; x++)
-            if (colScore[x] / h > t)
-                colIdx.push(x);
-        const rowIdx = [];
-        for (let y = 0; y < h; y++)
-            if (rowScore[y] / w > t)
-                rowIdx.push(y);
-        if (!colIdx.length || !rowIdx.length)
-            continue;
-        cols = groupIndices(colIdx, 10);
-        rows = groupIndices(rowIdx, 10);
-        if (cols.length >= 5 && rows.length >= 3)
-            break;
-    }
-    if (!cols || !rows) {
+    const colIdx = [];
+    for (let x = 0; x < w; x++)
+        if (colGrayCount[x] / h > 0.8)
+            colIdx.push(x);
+    const rowIdx = [];
+    // A genuine border row is dark across ~98-100% of the width. Bold header text can
+    // coincidentally cover 50-67% of the width at some scan lines (letter strokes lining
+    // up across many header words) without being a border at all — 0.85 sits well above
+    // that text noise and well below a real border line.
+    for (let y = 0; y < h; y++)
+        if (rowGrayCount[y] / w > 0.85)
+            rowIdx.push(y);
+    if (!colIdx.length || !rowIdx.length) {
         throw new Error('Could not detect a gridded table in this image. Use a screenshot of the full bordered battle-report table.');
     }
+    const cols = groupIndices(colIdx, 4);
+    const rows = groupIndices(rowIdx, 4);
     if (cols[0] > 10)
         cols.unshift(0);
     if (cols[cols.length - 1] < w - 10)
@@ -4282,10 +4271,16 @@ function cropCellCanvas(sourceCanvas, x0, x1, y0, y1, { scale = 4, tight = false
     }
     const pad = 4;
     const foundInk = maxX >= minX;
-    const cx0 = foundInk ? Math.max(0, minX - pad) : 0;
-    const cx1 = foundInk ? Math.min(sw, maxX + pad + 1) : sw;
-    const cy0 = foundInk ? Math.max(0, minY - pad) : 0;
-    const cy1 = foundInk ? Math.min(sh, maxY + pad + 1) : sh;
+    // Clamping to 0/sw here (rather than borderSkip/sw-borderSkip) was letting the pad
+    // expansion undo borderSkip's own protection: a digit sitting close to a cell's edge
+    // (nothing unusual — e.g. a 7-digit number with little left margin) let the crop pull
+    // back out far enough to re-include a sliver of the actual gridline, which Tesseract
+    // then read as a stray leading "1" (3430237 -> 13430237) on an otherwise perfectly
+    // legible cell. Confirmed against a real report screenshot, not just in theory.
+    const cx0 = foundInk ? Math.max(borderSkip, minX - pad) : 0;
+    const cx1 = foundInk ? Math.min(sw - borderSkip, maxX + pad + 1) : sw;
+    const cy0 = foundInk ? Math.max(borderSkip, minY - pad) : 0;
+    const cy1 = foundInk ? Math.min(sh - borderSkip, maxY + pad + 1) : sh;
     const cw = cx1 - cx0, ch = cy1 - cy0;
     if (cw <= 0 || ch <= 0)
         return null;
@@ -4314,50 +4309,61 @@ function cellHasInk(cellCanvas) {
 // Target confidence (Tesseract's own 0-100 score) below which a cell is worth a second,
 // more aggressive attempt rather than just accepting whatever came back first.
 const OCR_CONFIDENCE_TARGET = 70;
-async function recognizeBest(worker, cellCanvas, psms, whitelist) {
-    let best = { text: '', confidence: -1 };
-    for (const psm of psms) {
-        await worker.setParameters({ tessedit_pageseg_mode: psm, tessedit_char_whitelist: whitelist });
-        const { data } = await worker.recognize(cellCanvas);
-        const conf = typeof data.confidence === 'number' ? data.confidence : 0;
-        if ((data.text || '').trim() !== '' && conf > best.confidence)
-            best = { text: data.text, confidence: conf };
-        if (best.confidence >= OCR_CONFIDENCE_TARGET)
-            break;
-    }
-    return best;
-}
+// Digits only, PSM 6 first. Isolated single-character cells are the one case PSM 6
+// doesn't already nail, so a couple of alternate page segmentation modes are kept as a
+// fallback rather than voted across (voting across PSMs on every cell is what caused the
+// "correct answer outvoted" bug last time). No confidence-based selection between
+// attempts here deliberately — Tesseract's own confidence score turned out to sometimes
+// be high on a wrong read (confirmed: a garbled header stayed unrecognized because a bad
+// reading scored just above the retry threshold), so the first PSM that returns anything
+// at all wins rather than comparing scores.
 async function ocrNumericCell(worker, cellCanvas) {
     if (!cellCanvas)
-        return { value: '0', confidence: 100 };
-    let best = await recognizeBest(worker, cellCanvas, ['7', '8', '6'], OCR_NUMERIC_WHITELIST);
-    // Weak result on the plain upscaled cell — escalate to an Otsu-binarized version
-    // before settling. This is what actually rescues most of the previously-unreadable
-    // cells: faint text, a background tint, or jpeg noise confuses Tesseract's own
-    // thresholding, but a clean forced black/white pass often reads perfectly.
-    if (best.confidence < OCR_CONFIDENCE_TARGET) {
-        const binBest = await recognizeBest(worker, binarizeCanvas(cellCanvas), ['7', '8', '6'], OCR_NUMERIC_WHITELIST);
-        if (binBest.confidence > best.confidence)
-            best = binBest;
+        return '0';
+    for (const psm of ['6', '7', '8']) {
+        await worker.setParameters({ tessedit_pageseg_mode: psm, tessedit_char_whitelist: OCR_NUMERIC_WHITELIST });
+        const { data } = await worker.recognize(cellCanvas);
+        const digits = (data.text || '').replace(/[^0-9]/g, '');
+        if (digits !== '')
+            return digits;
     }
-    const digits = (best.text || '').replace(/[^0-9]/g, '');
-    if (digits !== '')
-        return { value: digits, confidence: best.confidence };
+    // Every PSM came back with no digits. That's only trustworthy as a real 0 if the cell
+    // is actually visually blank — if there's ink here that none of the PSMs could turn
+    // into digits, silently writing '0' would corrupt this exact number instead of
+    // failing loudly.
     if (cellHasInk(cellCanvas))
-        return { value: null, confidence: 0 };
-    return { value: '0', confidence: 100 };
+        return null; // signals a genuine OCR failure, not an empty cell
+    return '0';
 }
 async function ocrTextCell(worker, cellCanvas) {
     if (!cellCanvas)
-        return { value: '', confidence: 100 };
-    let best = await recognizeBest(worker, cellCanvas, ['7', '6', '13'], OCR_TEXT_WHITELIST);
-    if (best.confidence < OCR_CONFIDENCE_TARGET) {
-        const binBest = await recognizeBest(worker, binarizeCanvas(cellCanvas), ['7', '6', '13'], OCR_TEXT_WHITELIST);
-        if (binBest.confidence > best.confidence)
-            best = binBest;
+        return '';
+    // PSM 13 ("raw line, no layout analysis") is kept as a third fallback specifically
+    // because it behaves differently from 6/7 on a small minority of cells in
+    // Tesseract.js — a cell that one engine reads cleanly can still come back blank from
+    // another, and we'd rather burn one more recognize() pass than let that turn into a
+    // silent gap in the data.
+    for (const psm of ['6', '7', '13']) {
+        await worker.setParameters({ tessedit_pageseg_mode: psm, tessedit_char_whitelist: OCR_TEXT_WHITELIST });
+        const { data } = await worker.recognize(cellCanvas);
+        const txt = (data.text || '').replace(/\s+/g, ' ').trim();
+        if (txt !== '')
+            return txt;
     }
-    const txt = (best.text || '').replace(/\s+/g, ' ').trim();
-    return { value: txt, confidence: txt ? best.confidence : 0 };
+    return '';
+}
+// Thrown when a required cell comes back with no trustworthy reading after every retry
+// in ocrTextCell/ocrNumericCell — either a required text field (name/profession/faction)
+// OCR'd to nothing, or a numeric cell had visible ink but no digits could be extracted
+// from it. This must never be caught and papered over with a placeholder like "Unknown"
+// or "0" — an unreadable required cell means the row isn't safe to include, not that it
+// should be guessed at. The caller surfaces this as a conversion failure so the screenshot
+// can be retaken/recropped, instead of shipping a table with fabricated data in it.
+class OcrRequiredCellError extends Error {
+    constructor(rowNumber, fieldLabel) {
+        super(`Could not read the "${fieldLabel}" cell in data row ${rowNumber} of the table — OCR returned no trustworthy value for it after every retry. Refusing to guess a placeholder; please retry with a sharper/higher-resolution screenshot (or crop tighter around the table) and re-convert.`);
+        this.name = 'OcrRequiredCellError';
+    }
 }
 const KNOWN_HEADER_KEYS = Object.keys(HEADER_FIELD_MAP);
 function matchHeaderField(rawLabel) {
@@ -4390,7 +4396,7 @@ async function parseBattleReportFromGrid(canvas, workerPool, onProgress) {
     const rawHeaderForColumn = new Array(nCols).fill('');
     for (let c = 0; c < nCols; c++) {
         const cell = cropCellCanvas(canvas, cols[c], cols[c + 1], rows[0], rows[1]);
-        const { value: label } = await ocrTextCell(workerPool[0], cell);
+        const label = await ocrTextCell(workerPool[0], cell);
         rawHeaderForColumn[c] = label;
         fieldForColumn[c] = matchHeaderField(label);
     }
@@ -4412,9 +4418,16 @@ async function parseBattleReportFromGrid(canvas, workerPool, onProgress) {
     const totalCells = tasks.length;
     let done = 0;
     let nextTask = 0;
-    // Cells that come back genuinely unreadable are no longer a hard abort for the whole
-    // conversion — they're flagged (missing/low-confidence) and left for the review table
-    // instead, so one stubborn cell doesn't force a full re-shoot of the screenshot.
+    // A required cell (name/profession/faction, or any numeric cell with visible ink but
+    // no readable digits) that comes back unreadable aborts the WHOLE conversion via
+    // OcrRequiredCellError, rather than being flagged and left for a review table. That
+    // "flag it and continue" approach — tried for a while — meant every image produced
+    // *some* output even when the grid itself had been mis-detected, and a garbled,
+    // clearly-wrong multi-word jumble in a name cell looked no different from an
+    // ordinary low-confidence digit: both just sat in the review table waiting to be
+    // manually caught. Hard-failing means a botched read either doesn't happen, or
+    // stops the conversion outright with a specific, actionable row/column instead of
+    // silently shipping fabricated data.
     async function runWorker(worker) {
         while (true) {
             const taskIdx = nextTask++;
@@ -4424,7 +4437,14 @@ async function parseBattleReportFromGrid(canvas, workerPool, onProgress) {
             const field = fieldForColumn[c];
             const isText = field ? TEXT_FIELDS.has(field) : false;
             const cell = cropCellCanvas(canvas, cols[c], cols[c + 1], rows[r], rows[r + 1], { tight: !isText });
-            results[taskIdx] = isText ? await ocrTextCell(worker, cell) : await ocrNumericCell(worker, cell);
+            const value = isText ? await ocrTextCell(worker, cell) : await ocrNumericCell(worker, cell);
+            if (isText && value === '') {
+                throw new OcrRequiredCellError(r, rawHeaderForColumn[c] || field);
+            }
+            if (!isText && value === null) {
+                throw new OcrRequiredCellError(r, rawHeaderForColumn[c] || field || `Column ${c + 1}`);
+            }
+            results[taskIdx] = value;
             done++;
             if (onProgress)
                 onProgress(done, totalCells);
@@ -4435,56 +4455,42 @@ async function parseBattleReportFromGrid(canvas, workerPool, onProgress) {
     const players = [];
     for (let r = 1; r < nRows; r++) {
         const rowVals = {};
-        const rowConf = {};
         const extra = {};
-        let rowHasAnyContent = false;
         for (let c = 0; c < nCols; c++) {
-            const { value, confidence } = results[(r - 1) * nCols + c] || { value: '', confidence: 0 };
+            const value = results[(r - 1) * nCols + c];
             const field = fieldForColumn[c];
-            if (value !== '' && value !== null)
-                rowHasAnyContent = true;
-            if (field) {
+            if (field)
                 rowVals[field] = value;
-                rowConf[field] = confidence;
-            }
-            else {
+            else
                 extra[rawHeaderForColumn[c] || `Column ${c + 1}`] = value;
-            }
         }
-        if (!rowHasAnyContent)
+        if (!rowVals.name)
             continue; // fully blank row — a stray gridline artifact, not a missing player
-        if (/^name$/i.test(rowVals.name || '') || /^profession$/i.test(rowVals.name || ''))
+        if (/^name$/i.test(rowVals.name) || /^profession$/i.test(rowVals.name))
             continue; // a repeated header row the grid detector mistook for data
-        const missing = [];
-        TEXT_FIELDS.forEach(f => { if (!rowVals[f])
-            missing.push(f); });
-        Object.keys(HEADER_FIELD_MAP).forEach(k => {
-            const f = HEADER_FIELD_MAP[k];
-            if (!TEXT_FIELDS.has(f) && rowVals[f] == null)
-                missing.push(f);
-        });
-        const name = rowVals.name || '';
-        const nameSuggestion = name ? closestByLevenshtein(name, knownNames) : null;
-        const damage = cleanOcrNumber(rowVals.damage);
-        const healing = cleanOcrNumber(rowVals.healing);
-        const implausible = [];
-        if (damage > MAX_PLAUSIBLE_DAMAGE)
-            implausible.push('damage');
-        if (healing > MAX_PLAUSIBLE_HEALING)
-            implausible.push('healing');
+        // Belt-and-suspenders: the per-cell throw above should already have stopped
+        // anything from getting here with a blank profession/faction, but this stays a
+        // hard failure here too rather than a silent "Unknown" at the last point before
+        // a row is treated as good data.
+        if (!rowVals.profession)
+            throw new OcrRequiredCellError(r, 'Profession');
+        if (!rowVals.faction)
+            throw new OcrRequiredCellError(r, 'Faction');
+        const name = rowVals.name;
+        const nameSuggestion = closestByLevenshtein(name, knownNames);
         players.push({
-            name, profession: rowVals.profession || '', faction: rowVals.faction || '',
+            name, profession: rowVals.profession, faction: rowVals.faction,
             kills: cleanOcrNumber(rowVals.kills),
             assists: cleanOcrNumber(rowVals.assists),
             deaths: cleanOcrNumber(rowVals.deaths),
-            damage,
+            damage: cleanOcrNumber(rowVals.damage),
             largestHit: cleanOcrNumber(rowVals.largestHit),
             damageTaken: cleanOcrNumber(rowVals.damageTaken),
-            healing,
+            healing: cleanOcrNumber(rowVals.healing),
             largestHeal: cleanOcrNumber(rowVals.largestHeal),
-            captures: cleanOcrNumber(rowVals.captures),
+            captures: cleanOcrNumber(rowVals.captures), // 0 for report types with no captures column
             extra,
-            _ocr: { confidence: rowConf, missing, implausible, nameSuggestion }
+            _ocr: { nameSuggestion } // informational only now — every row here already passed every hard check
         });
     }
     if (!players.length)
