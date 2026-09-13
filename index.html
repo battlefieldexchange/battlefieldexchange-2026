@@ -3536,6 +3536,7 @@ async function buyStock() {
         return;
     }
     let filledPrice;
+    let debugCtx = {};
     try {
         const posRef = doc(db, 'users', state.uid, 'positions', stockPositionId(symbol));
         const userRef = doc(db, 'users', state.uid);
@@ -3544,6 +3545,7 @@ async function buyStock() {
             const pointerSnap = await tx.get(pointerRef);
             if (!pointerSnap.exists())
                 throw new Error("Market price for this stock isn't published yet — try again in a moment.");
+            debugCtx.reportId = pointerSnap.data().reportId;
             const priceSnap = await tx.get(doc(db, 'pricesByReport', pointerSnap.data().reportId));
             const price = priceSnap.exists() && priceSnap.data().prices ? priceSnap.data().prices[symbol] : null;
             if (typeof price !== 'number')
@@ -3551,10 +3553,12 @@ async function buyStock() {
             const cost = price * qty;
             const userSnap = await tx.get(userRef);
             const userData = userSnap.data();
+            debugCtx = { ...debugCtx, symbol, qty, price, cost, cash: userData?.cash, realized: userData?.realized };
             if (cost > userData.cash)
                 throw new Error('Not enough cash. Need ' + fmtMoney(cost) + ', have ' + fmtMoney(userData.cash) + '.');
             const posSnap = await tx.get(posRef);
             const existing = posSnap.exists() ? posSnap.data() : null;
+            debugCtx.existing = existing ? { type: existing.type, status: existing.status, qty: existing.qty, symbol: existing.symbol } : null;
             let newQty, avgCost, boughtDay;
             if (existing && existing.type === 'stock' && existing.status === 'open') {
                 newQty = Number(existing.qty || 0) + qty;
@@ -3566,6 +3570,7 @@ async function buyStock() {
                 avgCost = price;
                 boughtDay = state.day;
             }
+            debugCtx.write = { newQty, avgCost, boughtDay, cashDelta: -cost };
             tx.set(posRef, { type: 'stock', symbol, qty: newQty, avgCost, boughtDay, status: 'open', dismissed: false, cashDelta: -cost, realizedDelta: 0 });
             tx.update(userRef, { cash: userData.cash - cost, realized: userData.realized, lastTradeId: posRef.id });
             filledPrice = price;
@@ -3577,7 +3582,13 @@ async function buyStock() {
     }
     catch (err) {
         msg.className = 'msg err';
-        msg.textContent = 'Stock purchase failed: ' + err.message;
+        // Embedding what was actually attempted directly in the error, rather than just
+        // the bare Firestore message, turns the next occurrence of this into a
+        // self-contained report instead of needing a separate diagnostic round-trip --
+        // exact symbol, computed price/cost, the existing position (if any) it was
+        // trying to write against, and the account state at the moment of failure.
+        console.error('buyStock failed', debugCtx, err);
+        msg.textContent = 'Stock purchase failed: ' + err.message + ' [debug: ' + JSON.stringify(debugCtx) + ']';
     }
 }
 async function sellStock(symbol, sellQty) {
@@ -3603,26 +3614,33 @@ async function sellStock(symbol, sellQty) {
         const posRef = doc(db, 'users', state.uid, 'positions', pos.id);
         const userRef = doc(db, 'users', state.uid);
         const pointerRef = doc(db, 'market', 'latestReportId');
+        let debugCtx = { symbol, sellQty, posId: pos.id };
         await runTransaction(db, async (tx) => {
             const pointerSnap = await tx.get(pointerRef);
             if (!pointerSnap.exists())
                 throw new Error("Market price for this stock isn't published yet — try again in a moment.");
+            debugCtx.reportId = pointerSnap.data().reportId;
             const priceSnap = await tx.get(doc(db, 'pricesByReport', pointerSnap.data().reportId));
             const price = priceSnap.exists() && priceSnap.data().prices ? priceSnap.data().prices[symbol] : null;
             if (typeof price !== 'number')
                 throw new Error("Market price for this stock isn't published yet — try again in a moment.");
+            debugCtx.price = price;
             const posSnap = await tx.get(posRef);
             if (!posSnap.exists() || posSnap.data().status !== 'open')
                 throw new Error('This position is no longer open.');
             const posData = posSnap.data();
+            debugCtx.posData = { type: posData.type, status: posData.status, qty: posData.qty, symbol: posData.symbol, avgCost: posData.avgCost };
             if (sellQty > posData.qty)
                 throw new Error('You only own ' + posData.qty + ' share' + (posData.qty === 1 ? '' : 's') + ' of ' + symbol + '.');
             const userSnap = await tx.get(userRef);
             const userData = userSnap.data();
+            debugCtx.cash = userData?.cash;
+            debugCtx.realized = userData?.realized;
             const proceeds = Math.round(price * sellQty * 100) / 100;
             const rawProceeds = price * sellQty;
             const pnl = Math.round((price - Number(posData.avgCost || 0)) * sellQty * 100) / 100;
             const remaining = posData.qty - sellQty;
+            debugCtx.write = { remaining, proceeds, rawProceeds, pnl };
             if (remaining > 0) {
                 tx.update(posRef, { qty: remaining, lastSellPrice: price, lastSellDay: state.day, cashDelta: rawProceeds, realizedDelta: pnl });
             }
@@ -3630,12 +3648,13 @@ async function sellStock(symbol, sellQty) {
                 tx.update(posRef, { qty: 0, status: 'sold', sellPrice: price, sellDay: state.day, payoff: proceeds, realizedPnl: pnl, dismissed: false, cashDelta: rawProceeds, realizedDelta: pnl });
             }
             tx.update(userRef, { cash: userData.cash + rawProceeds, realized: userData.realized + pnl, lastTradeId: posRef.id });
-        });
+        }).catch(err => { err.debugCtx = debugCtx; throw err; });
         renderAssets();
         renderStats();
     }
     catch (err) {
-        alert('Could not sell stock: ' + err.message);
+        console.error('sellStock failed', err.debugCtx, err);
+        alert('Could not sell stock: ' + err.message + (err.debugCtx ? ' [debug: ' + JSON.stringify(err.debugCtx) + ']' : ''));
     }
 }
 function renderAssets() {
