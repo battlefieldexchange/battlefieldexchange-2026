@@ -431,6 +431,9 @@
           <div class="admin-note" style="margin-top:16px;">If buy or sell fails with "Missing or insufficient permissions" and Force resync above doesn't fix it, this checks the actual published price data directly — whether the pointer and its price snapshot exist, and which currently-tradeable symbols (if any) are missing a canonical price. Read-only, changes nothing.</div>
           <button class="debug-btn" id="dbgDiagnosePriceData">Diagnose missing canonical price data</button>
           <div id="priceDiagResults" style="margin-top:10px; font-size:12px; color:var(--text-dim); white-space:pre-line;"></div>
+          <div class="admin-note" style="margin-top:16px;">If buying stock specifically fails with "Missing or insufficient permissions" (selling still works): attempts a real, zero-quantity buy-shaped write against your own account using a live symbol and its actual current price — the exact same shape a real purchase uses, status="open" included — then deletes it immediately. Read-only in effect; your real cash and positions are never touched.</div>
+          <button class="debug-btn" id="dbgDiagnoseBuyPerms">Diagnose stock buy permission error</button>
+          <div id="buyDiagResults" style="margin-top:10px; font-size:12px; color:var(--text-dim); white-space:pre-line;"></div>
           <div class="admin-note" style="margin-top:16px;">If options/writes fail with "Missing or insufficient permissions" (stock trading unaffected): tests whether your positions security rule was updated for the newer option/write fields (side, strike, expiryDay, premium, settlePrice) alongside the older stock-only shape. Writes disposable, zero-value test positions under your own account and deletes each immediately; your real cash and positions are never touched.</div>
           <button class="debug-btn" id="dbgDiagnoseTradePerms">Diagnose option/write trade permission error</button>
           <div id="tradeDiagResults" style="margin-top:10px; font-size:12px; color:var(--text-dim); white-space:pre-line;"></div>
@@ -1012,7 +1015,12 @@ async function hashReportStats(players) {
     return Array.from(new Uint8Array(digest)).map(b => b.toString(16).padStart(2, '0')).join('');
 }
 function statsKey(p) {
-    return [p.damage, p.healing, p.assists, p.deaths].join('|');
+    // Every numeric stat, not just 4 of them -- the more fields two reports agree on
+    // simultaneously, the more astronomically unlikely it is that they're actually two
+    // different battles rather than the same one uploaded twice. Deliberately excludes
+    // name: that's the whole point (see dbgFindDupes below) -- a name OCR'd slightly
+    // differently between two uploads of the same battle must not hide a real duplicate.
+    return [p.damage, p.healing, p.assists, p.deaths, p.kills, p.largestHit, p.damageTaken, p.largestHeal, p.captures].join('|');
 }
 async function hashStatsOnly(players) {
     const sorted = [...players].map(statsKey).sort();
@@ -1024,7 +1032,15 @@ function statsSortedPlayers(players) {
     return [...players].map(p => ({ name: p.name, key: statsKey(p) })).sort((a, b) => a.key.localeCompare(b.key));
 }
 async function submitReport(players, filename, isSynthetic) {
-    const statsHash = await hashReportStats(players);
+    // Name-independent, same reasoning as dbgFindDupes above: hashing name+stats
+    // together let the exact same battle slip through as two "different" reports
+    // whenever OCR read a name even slightly differently between two uploads (this is
+    // precisely how ~300 real duplicates ended up needing manual cleanup). Every
+    // numeric stat still has to match for every player, so this only ever collapses
+    // two uploads that are actually the same battle -- it doesn't make dedup looser,
+    // it makes it correctly ignore the one field (OCR'd name text) that has no
+    // business being part of "is this the same battle" in the first place.
+    const statsHash = await hashStatsOnly(players);
     const counterRef = doc(db, 'counters', 'day');
     const reportsCol = collection(db, 'reports');
     const newReportRef = doc(reportsCol, statsHash);
@@ -1525,6 +1541,26 @@ async function subscribeToMarket() {
     }
     const lastCachedDay = Array.from(byId.values()).reduce((max, r) => Math.max(max, r.day), 0);
     const q = query(collection(db, 'reports'), where('day', '>', lastCachedDay), orderBy('day'));
+    // recomputeMarket() re-derives Elo/prices from the ENTIRE report history and
+    // renderAll() re-renders every view — both too expensive to run once per incoming
+    // report. A bulk backfill (a bot posting a hundred-plus reports back to back, each
+    // its own write, arriving as separate snapshot events over several minutes rather
+    // than one batch) used to trigger that full cycle once per report, back to back,
+    // each one working over an ever-growing history — which is what made the page
+    // grind to a crawl during exactly this scenario. Debouncing coalesces any burst of
+    // snapshot events arriving within 400ms of each other into a single recompute+paint
+    // after things settle, while a single new report still paints almost immediately
+    // (nothing else arrives in that window to keep pushing it back).
+    let paintDebounceTimer = null;
+    function schedulePaint() {
+        if (paintDebounceTimer)
+            clearTimeout(paintDebounceTimer);
+        paintDebounceTimer = setTimeout(() => {
+            paintDebounceTimer = null;
+            paint();
+            checkAndSettlePositions();
+        }, 400);
+    }
     unsubReports = onSnapshot(q, (snap) => {
         snap.docChanges().forEach(change => {
             const rep = { id: change.doc.id, ...change.doc.data() };
@@ -1534,8 +1570,7 @@ async function subscribeToMarket() {
                 byId.set(rep.id, rep);
         });
         saveCachedReports(Array.from(byId.values()));
-        paint();
-        checkAndSettlePositions();
+        schedulePaint();
     });
     reportsRecheckTimer = setInterval(async () => {
         if (await verifyAgainstServer()) {
@@ -2454,16 +2489,26 @@ document.getElementById('dbgTestReport').addEventListener('click', async () => {
 document.getElementById('dbgFindDupes').addEventListener('click', async () => {
     const out = document.getElementById('dupeResults');
     out.textContent = 'Scanning ' + state.reports.length + ' existing reports…';
+    // Fingerprint by stats only (every numeric field), NOT name+stats. A report hashed
+    // together with names used to miss real duplicates whenever OCR read a name even
+    // slightly differently between two uploads of the same battle (confirmed: this
+    // exact thing happened with "Telrain Cosmar" vs "Telreign Cosmar") -- the two
+    // uploads would produce different hashes and never get flagged as duplicates of
+    // each other at all. Matching on every numeric stat instead of the name means a
+    // report can now only "hide" from this check by coincidentally matching another
+    // real battle's damage, healing, kills, assists, deaths, largest hit, damage
+    // taken, largest heal, AND captures simultaneously for every single player in the
+    // report -- vanishingly unlikely for two actually-different battles.
     const byHash = {};
     for (const rep of state.reports) {
-        const hash = await hashReportStats(rep.players);
+        const hash = await hashStatsOnly(rep.players);
         (byHash[hash] = byHash[hash] || []).push(rep);
     }
     const dupGroups = Object.values(byHash)
         .filter(g => g.length > 1)
         .map(g => g.sort((a, b) => a.day - b.day));
     if (dupGroups.length === 0) {
-        out.textContent = 'Checked ' + state.reports.length + ' reports — no duplicate stats found.';
+        out.textContent = 'Checked ' + state.reports.length + ' reports — no duplicate stats found (matched on every numeric stat per player, ignoring names).';
         return;
     }
     out.innerHTML = '<div style="color:var(--red); margin-bottom:8px;">' + dupGroups.length + ' set(s) of reports share identical player stats:</div>' +
@@ -2886,6 +2931,83 @@ document.getElementById('dbgDiagnosePriceData').addEventListener('click', async 
     }
     catch (err) {
         lines.push('Failed: ' + err.message);
+    }
+    out.textContent = lines.join('\n');
+});
+document.getElementById('dbgDiagnoseBuyPerms').addEventListener('click', async () => {
+    if (!state.isAdmin)
+        return;
+    const out = document.getElementById('buyDiagResults');
+    out.textContent = 'Testing disposable, zero-cost buy transactions under your own account (deleted immediately after; your real cash and positions are never touched — cashDelta is 0 throughout, so even the cash-update half of each test moves nothing)…';
+    const lines = [];
+    const realSymbol = Object.keys(state.players || {}).find(s => currentPrice(s) != null);
+    if (!realSymbol) {
+        out.textContent = 'Could not find a currently-priced symbol to test against.';
+        return;
+    }
+    const price = currentPrice(realSymbol);
+    const testId = 'diag_stock_buy_test';
+    const posRef = doc(db, 'users', state.uid, 'positions', testId);
+    const userRef = doc(db, 'users', state.uid);
+    const variants = [
+        {
+            label: 'Fresh buy of a new symbol (no existing position — matches a first-time purchase)',
+            setup: null,
+            data: { type: 'stock', symbol: realSymbol, qty: 0, avgCost: price, boughtDay: state.day, status: 'open', dismissed: false, cashDelta: 0, realizedDelta: 0 }
+        },
+        {
+            label: 'Buying more of a symbol you already hold an open position in',
+            setup: { type: 'stock', symbol: realSymbol, qty: 0, avgCost: price, boughtDay: state.day, status: 'open', dismissed: false, cashDelta: 0, realizedDelta: 0 },
+            data: { type: 'stock', symbol: realSymbol, qty: 0, avgCost: price, boughtDay: state.day, status: 'open', dismissed: false, cashDelta: 0, realizedDelta: 0 }
+        },
+        {
+            label: 'Re-buying a symbol after fully selling it before (position doc exists with status=sold, qty=0)',
+            setup: { type: 'stock', symbol: realSymbol, qty: 0, avgCost: price, boughtDay: state.day, status: 'sold', sellPrice: price, sellDay: state.day, payoff: 0, realizedPnl: 0, dismissed: false, cashDelta: 0, realizedDelta: 0 },
+            data: { type: 'stock', symbol: realSymbol, qty: 0, avgCost: price, boughtDay: state.day, status: 'open', dismissed: false, cashDelta: 0, realizedDelta: 0 }
+        }
+    ];
+    for (const v of variants) {
+        // Position-only write first — isolates whether the /positions rule itself is
+        // the blocker, independent of the /users update that happens alongside it in a
+        // real buy.
+        let positionAllowed = null;
+        try {
+            await deleteDoc(posRef).catch(() => { });
+            if (v.setup)
+                await setDoc(posRef, v.setup);
+            await setDoc(posRef, v.data);
+            positionAllowed = true;
+        }
+        catch (err) {
+            positionAllowed = false;
+            lines.push('[POSITION DENY] ' + v.label + ' — ' + err.message);
+        }
+        finally {
+            await deleteDoc(posRef).catch(() => { });
+        }
+        if (!positionAllowed)
+            continue;
+        // Full transaction, exactly like buyStock() — position write + users/{uid} cash
+        // update together, same shape, same fields, just cashDelta=0 throughout so
+        // nothing real moves even though this is the complete real code path.
+        try {
+            await deleteDoc(posRef).catch(() => { });
+            if (v.setup)
+                await setDoc(posRef, v.setup);
+            await runTransaction(db, async (tx) => {
+                const userSnap = await tx.get(userRef);
+                const userData = userSnap.data();
+                tx.set(posRef, v.data);
+                tx.update(userRef, { cash: userData.cash, realized: userData.realized, lastTradeId: posRef.id });
+            });
+            lines.push('[FULL TRANSACTION ALLOW] ' + v.label);
+        }
+        catch (err) {
+            lines.push('[FULL TRANSACTION DENY] ' + v.label + ' — ' + err.message);
+        }
+        finally {
+            await deleteDoc(posRef).catch(() => { });
+        }
     }
     out.textContent = lines.join('\n');
 });
