@@ -4237,9 +4237,12 @@ function closestByLevenshtein(target, candidates, maxDistance) {
 // Otsu's method: finds the brightness cutoff that best separates a cell's pixels into
 // two clean clusters (ink vs background) by maximizing between-class variance, then
 // snaps every pixel to pure black or white at that cutoff. This is a much stronger,
-// per-cell-adaptive alternative to a single fixed brightness threshold, and is used as
-// an escalation pass when the first OCR attempt on a cell comes back low-confidence —
-// faint text, background tint, and compression noise are exactly what it cleans up.
+// per-cell-adaptive alternative to a single fixed brightness threshold. Used in
+// ocrNumericCell/ocrTextCell as a final fallback crop — tried only after the plain crop
+// has already failed every whitelisted PSM — since faint text, background tint, and
+// compression noise are exactly what it cleans up. Not gated on confidence (see the
+// comment above ocrNumericCell for why); it's just one more deterministic attempt in the
+// same first-non-blank-wins sequence.
 function binarizeCanvas(sourceCanvas) {
     const w = sourceCanvas.width, h = sourceCanvas.height;
     if (!w || !h)
@@ -4313,9 +4316,19 @@ function detectTableGrid(canvas) {
             }
         }
     }
+    // Column threshold is lower than the row one (0.65 vs 0.85) because the two face
+    // different noise sources. A column's coverage is measured down the FULL image height
+    // across every data row, and text content varies row to row (different names, different
+    // digit counts), so there's no equivalent to a header row's bold-text alignment problem
+    // pushing coverage up — a real column border can legitimately come in fainter. Confirmed
+    // against why_delete_this.PNG: the border between "Largest Heal" and "Medic Revives
+    // Performed" is a genuine double-hairline that peaks at 71% coverage on its strongest
+    // pixel column — under the old 0.8 cutoff that border was never detected at all, silently
+    // merging the two columns into one unrecognized "extra" column and dropping Largest Heal
+    // from that report's output with no flag anywhere.
     const colIdx = [];
     for (let x = 0; x < w; x++)
-        if (colGrayCount[x] / h > 0.8)
+        if (colGrayCount[x] / h > 0.65)
             colIdx.push(x);
     const rowIdx = [];
     // A genuine border row is dark across ~98-100% of the width. Bold header text can
@@ -4328,8 +4341,16 @@ function detectTableGrid(canvas) {
     if (!colIdx.length || !rowIdx.length) {
         throw new Error('Could not detect a gridded table in this image. Use a screenshot of the full bordered battle-report table.');
     }
-    const cols = groupIndices(colIdx, 4);
-    const rows = groupIndices(rowIdx, 4);
+    // Merge gap widened from 4 to 7px. Adjacent <td> borders can render as two separate
+    // hairlines rather than one solid line — confirmed on commando_game.PNG and
+    // jedi_bf_9-1-26_4.PNG, where every real border showed up as a pair of lines exactly
+    // 5.5px apart, consistently, across 5-7 borders per image. At gap=4 those pairs never
+    // merged, so detectTableGrid found 19-21 "columns" and up to 20 "rows" where there were
+    // really 13. 7px clears that 5.5px pairing with room to spare while staying far below
+    // any real column/row spacing (tens to hundreds of px), so there's no risk of merging
+    // two genuinely distinct columns or rows.
+    const cols = groupIndices(colIdx, 7);
+    const rows = groupIndices(rowIdx, 7);
     if (cols[0] > 10)
         cols.unshift(0);
     if (cols[cols.length - 1] < w - 10)
@@ -4447,9 +4468,6 @@ function cellHasInk(cellCanvas) {
     }
     return (darkPixels / totalPixels) > 0.01;
 }
-// Target confidence (Tesseract's own 0-100 score) below which a cell is worth a second,
-// more aggressive attempt rather than just accepting whatever came back first.
-const OCR_CONFIDENCE_TARGET = 70;
 // Digits only, PSM 6 first. Isolated single-character cells are the one case PSM 6
 // doesn't already nail, so a couple of alternate page segmentation modes are kept as a
 // fallback rather than voted across (voting across PSMs on every cell is what caused the
@@ -4457,7 +4475,10 @@ const OCR_CONFIDENCE_TARGET = 70;
 // attempts here deliberately — Tesseract's own confidence score turned out to sometimes
 // be high on a wrong read (confirmed: a garbled header stayed unrecognized because a bad
 // reading scored just above the retry threshold), so the first PSM that returns anything
-// at all wins rather than comparing scores.
+// at all wins rather than comparing scores. Confidence is never used to pick a winner or
+// to flag a cell after the fact either — that check used to exist here and in the review
+// table but never actually caught anything worth catching, for the same reason, so it's
+// been removed rather than left in as a check that looks active but isn't.
 async function ocrNumericCell(worker, cellCanvas) {
     if (!cellCanvas)
         return '0';
@@ -4468,10 +4489,24 @@ async function ocrNumericCell(worker, cellCanvas) {
         if (digits !== '')
             return digits;
     }
-    // Every PSM came back with no digits. That's only trustworthy as a real 0 if the cell
-    // is actually visually blank — if there's ink here that none of the PSMs could turn
-    // into digits, silently writing '0' would corrupt this exact number instead of
-    // failing loudly.
+    // Plain crop came back empty on every PSM. One more shot before giving up: run the same
+    // PSM sequence again against an Otsu-binarized version of the same crop, which cleans up
+    // exactly the faint-text/background-tint/compression-noise cases the plain crop struggles
+    // with. Still no confidence involved and still strictly sequential/first-non-blank-wins —
+    // this only ever turns a would-be hard failure into a real reading, it never overrides or
+    // second-guesses a reading the plain crop already produced above.
+    const binarized = binarizeCanvas(cellCanvas);
+    for (const psm of ['6', '7', '8']) {
+        await worker.setParameters({ tessedit_pageseg_mode: psm, tessedit_char_whitelist: OCR_NUMERIC_WHITELIST });
+        const { data } = await worker.recognize(binarized);
+        const digits = (data.text || '').replace(/[^0-9]/g, '');
+        if (digits !== '')
+            return digits;
+    }
+    // Every PSM, on both the plain and binarized crop, came back with no digits. That's only
+    // trustworthy as a real 0 if the cell is actually visually blank — if there's ink here
+    // that nothing could turn into digits, silently writing '0' would corrupt this exact
+    // number instead of failing loudly.
     if (cellHasInk(cellCanvas))
         return null; // signals a genuine OCR failure, not an empty cell
     return '0';
@@ -4491,6 +4526,16 @@ async function ocrTextCell(worker, cellCanvas) {
         if (txt !== '')
             return txt;
     }
+    // Same last resort as the numeric path: retry the full PSM sequence against an
+    // Otsu-binarized crop before accepting that this cell is genuinely unreadable.
+    const binarized = binarizeCanvas(cellCanvas);
+    for (const psm of ['6', '7', '13']) {
+        await worker.setParameters({ tessedit_pageseg_mode: psm, tessedit_char_whitelist: OCR_TEXT_WHITELIST });
+        const { data } = await worker.recognize(binarized);
+        const txt = (data.text || '').replace(/\s+/g, ' ').trim();
+        if (txt !== '')
+            return txt;
+    }
     return '';
 }
 // Thrown when a required cell comes back with no trustworthy reading after every retry
@@ -4505,6 +4550,24 @@ class OcrRequiredCellError extends Error {
         super(`Could not read the "${fieldLabel}" cell in data row ${rowNumber} of the table — OCR returned no trustworthy value for it after every retry. Refusing to guess a placeholder; please retry with a sharper/higher-resolution screenshot (or crop tighter around the table) and re-convert.`);
         this.name = 'OcrRequiredCellError';
     }
+}
+// Profession and Faction are small, closed vocabularies (unlike Name, which is open-ended),
+// so a garbled OCR read can be safely snapped to the nearest known value the same way
+// headers already are — an exact case-insensitive match is kept as-is, and only a close
+// fuzzy match (e.g. "Bounly Hunter", "Oficer") gets corrected. Anything too far from every
+// known value is left untouched rather than forced into an unrelated one, in case a report
+// ever includes a profession this list doesn't know about yet.
+const OCR_KNOWN_PROFESSIONS = ['Commando', 'Officer', 'Bounty Hunter', 'Smuggler', 'Medic', 'Jedi', 'Spy'];
+const OCR_KNOWN_FACTIONS = ['Blue Team', 'Red Team'];
+function snapToKnownVocabulary(value, knownList) {
+    if (!value)
+        return value;
+    const lowerList = knownList.map(k => k.toLowerCase());
+    const exactIdx = lowerList.indexOf(value.toLowerCase());
+    if (exactIdx !== -1)
+        return knownList[exactIdx];
+    const found = closestByLevenshtein(value.toLowerCase(), lowerList, Math.max(1, Math.floor(value.length * 0.3)));
+    return found ? knownList[lowerList.indexOf(found.match)] : value;
 }
 const KNOWN_HEADER_KEYS = Object.keys(HEADER_FIELD_MAP);
 function matchHeaderField(rawLabel) {
@@ -4619,19 +4682,33 @@ async function parseBattleReportFromGrid(canvas, workerPool, onProgress) {
             throw new OcrRequiredCellError(r, 'Faction');
         const name = rowVals.name;
         const nameSuggestion = closestByLevenshtein(name, knownNames);
+        const damage = cleanOcrNumber(rowVals.damage);
+        const healing = cleanOcrNumber(rowVals.healing);
+        // Run the same implausible-value check upload already enforces (validateAndParseReportHTML),
+        // but right here at parse time instead of only at the "upload to shared market" step. Nothing
+        // unsafe was reaching the market either way, but the row now gets flagged the moment it's
+        // cheapest to fix — in the review table, before you've gone looking for it — instead of only
+        // surfacing as an upload rejection later.
+        const implausible = [];
+        if (damage > MAX_PLAUSIBLE_DAMAGE)
+            implausible.push('damage');
+        if (healing > MAX_PLAUSIBLE_HEALING)
+            implausible.push('healing');
         players.push({
-            name, profession: rowVals.profession, faction: rowVals.faction,
+            name,
+            profession: snapToKnownVocabulary(rowVals.profession, OCR_KNOWN_PROFESSIONS),
+            faction: snapToKnownVocabulary(rowVals.faction, OCR_KNOWN_FACTIONS),
             kills: cleanOcrNumber(rowVals.kills),
             assists: cleanOcrNumber(rowVals.assists),
             deaths: cleanOcrNumber(rowVals.deaths),
-            damage: cleanOcrNumber(rowVals.damage),
+            damage,
             largestHit: cleanOcrNumber(rowVals.largestHit),
             damageTaken: cleanOcrNumber(rowVals.damageTaken),
-            healing: cleanOcrNumber(rowVals.healing),
+            healing,
             largestHeal: cleanOcrNumber(rowVals.largestHeal),
             captures: cleanOcrNumber(rowVals.captures), // 0 for report types with no captures column
             extra,
-            _ocr: { nameSuggestion } // informational only now — every row here already passed every hard check
+            _ocr: { nameSuggestion, implausible, missing: [] }
         });
     }
     if (!players.length)
@@ -4645,9 +4722,6 @@ function ocrInputClass(player, field) {
     const ocr = player._ocr || {};
     if ((ocr.implausible || []).includes(field) || (ocr.missing || []).includes(field))
         return 'ocr-implausible';
-    const conf = ocr.confidence ? ocr.confidence[field] : null;
-    if (typeof conf === 'number' && conf < OCR_CONFIDENCE_TARGET)
-        return 'ocr-low-conf';
     return '';
 }
 function renderOcrReviewTable() {
@@ -4717,7 +4791,7 @@ document.getElementById('ocrReviewTable').addEventListener('input', (e) => {
     if (target.dataset.field) {
         const field = target.dataset.field;
         player[field] = target.value;
-        const ocr = player._ocr || (player._ocr = { confidence: {}, missing: [], implausible: [], nameSuggestion: null });
+        const ocr = player._ocr || (player._ocr = { missing: [], implausible: [], nameSuggestion: null });
         ocr.missing = (ocr.missing || []).filter(f => f !== field);
         if (field === 'damage' || field === 'healing') {
             const n = cleanOcrNumber(target.value);
