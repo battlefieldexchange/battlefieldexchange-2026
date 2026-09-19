@@ -3838,11 +3838,20 @@ function renderEloTab() {
         spreadEl.textContent = PRICE_SCALE_SETTINGS.spread;
     if (topEl)
         topEl.textContent = fmtMoney(PRICE_SCALE_SETTINGS.top);
-    const entries = Object.keys(state.elo).map(name => Object.assign({ name }, state.elo[name]));
-    entries.sort((a, b) => b.elo - a.elo);
+    const allEntries = Object.keys(state.elo).map(name => Object.assign({ name }, state.elo[name]));
+    // Only players with enough of a track record (>5 battles) to be a meaningful
+    // rating, and capped at the top 100 by Elo -- a full roster listing puts every
+    // low-battle-count or poor-showing player's name and record on public display,
+    // which isn't something this page needs to do.
+    const MIN_BATTLES_SHOWN = 5;
+    const MAX_PLAYERS_SHOWN = 100;
+    const eligible = allEntries.filter(e => (e.battles || 0) > MIN_BATTLES_SHOWN);
+    eligible.sort((a, b) => b.elo - a.elo);
+    const hiddenForBattles = allEntries.length - eligible.length;
+    const entries = eligible.slice(0, MAX_PLAYERS_SHOWN);
     if (entries.length === 0) {
         summaryEl.innerHTML = '';
-        bodyEl.innerHTML = '<tr><td colspan="6" class="empty-state">No battles recorded yet.</td></tr>';
+        bodyEl.innerHTML = '<tr><td colspan="6" class="empty-state">No players with more than ' + MIN_BATTLES_SHOWN + ' battles yet.</td></tr>';
         if (eloChart) {
             eloChart.destroy();
             eloChart = null;
@@ -3850,11 +3859,13 @@ function renderEloTab() {
         return;
     }
     const avg = entries.reduce((s, e) => s + e.elo, 0) / entries.length;
+    const cappedNote = eligible.length > MAX_PLAYERS_SHOWN ? ' (top ' + MAX_PLAYERS_SHOWN + ' of ' + eligible.length + ' eligible)' : '';
     summaryEl.innerHTML =
-        '<div class="stat"><div class="label">PLAYERS TRACKED</div><div class="value">' + entries.length + '</div></div>'
+        '<div class="stat"><div class="label">PLAYERS SHOWN</div><div class="value">' + entries.length + cappedNote + '</div></div>'
             + '<div class="stat"><div class="label">HIGHEST</div><div class="value elo-pos">' + escapeHtml(entries[0].name) + ' · ' + Math.round(entries[0].elo) + '</div></div>'
             + '<div class="stat"><div class="label">LOWEST</div><div class="value elo-neg">' + escapeHtml(entries[entries.length - 1].name) + ' · ' + Math.round(entries[entries.length - 1].elo) + '</div></div>'
-            + '<div class="stat"><div class="label">AVERAGE</div><div class="value">' + Math.round(avg) + '</div></div>';
+            + '<div class="stat"><div class="label">AVERAGE</div><div class="value">' + Math.round(avg) + '</div></div>'
+            + (hiddenForBattles > 0 ? '<div class="stat"><div class="label">NOT SHOWN</div><div class="value" style="font-size:12px;">' + hiddenForBattles + ' with ' + MIN_BATTLES_SHOWN + ' or fewer battles</div></div>' : '');
     bodyEl.innerHTML = buildEloBodyHtml(entries);
     renderEloChart(entries);
 }
@@ -4171,11 +4182,34 @@ function loadImageToCanvas(file) {
             canvas.height = img.naturalHeight;
             canvas.getContext('2d').drawImage(img, 0, 0);
             URL.revokeObjectURL(img.src);
-            resolve(canvas);
+            resolve(ensureMinCanvasSize(canvas));
         };
         img.onerror = () => { URL.revokeObjectURL(img.src); reject(new Error('Could not load the image file.')); };
         img.src = URL.createObjectURL(file);
     });
+}
+// A small screenshot (phone capture, a shrunk browser window, a heavily downscaled
+// re-upload) can end up with single-pixel borders that barely register once resized —
+// detectTableGrid needs a border to be an unbroken dark-and-neutral line across nearly
+// the whole column/row, and a border that's already only 1px wide has no margin left if
+// the image is much smaller than a typical capture. Upscaling BEFORE grid detection (not
+// just before OCR-ing an already-cropped cell, which cropCellCanvas already does on its
+// own) gives that margin back. This only ever fires for genuinely small images -- an
+// image already at a normal capture resolution is untouched, so this can't be the thing
+// that regresses an already-working read the way past "improvements" here have.
+const OCR_MIN_CANVAS_WIDTH = 1400;
+function ensureMinCanvasSize(canvas) {
+    if (canvas.width >= OCR_MIN_CANVAS_WIDTH)
+        return canvas;
+    const scale = OCR_MIN_CANVAS_WIDTH / canvas.width;
+    const scaled = document.createElement('canvas');
+    scaled.width = Math.round(canvas.width * scale);
+    scaled.height = Math.round(canvas.height * scale);
+    const ctx = scaled.getContext('2d');
+    ctx.imageSmoothingEnabled = true;
+    ctx.imageSmoothingQuality = 'high';
+    ctx.drawImage(canvas, 0, 0, scaled.width, scaled.height);
+    return scaled;
 }
 function groupIndices(indices, gap) {
     const groups = [];
@@ -4237,12 +4271,9 @@ function closestByLevenshtein(target, candidates, maxDistance) {
 // Otsu's method: finds the brightness cutoff that best separates a cell's pixels into
 // two clean clusters (ink vs background) by maximizing between-class variance, then
 // snaps every pixel to pure black or white at that cutoff. This is a much stronger,
-// per-cell-adaptive alternative to a single fixed brightness threshold. Used in
-// ocrNumericCell/ocrTextCell as a final fallback crop — tried only after the plain crop
-// has already failed every whitelisted PSM — since faint text, background tint, and
-// compression noise are exactly what it cleans up. Not gated on confidence (see the
-// comment above ocrNumericCell for why); it's just one more deterministic attempt in the
-// same first-non-blank-wins sequence.
+// per-cell-adaptive alternative to a single fixed brightness threshold, and is used as
+// an escalation pass when the first OCR attempt on a cell comes back low-confidence —
+// faint text, background tint, and compression noise are exactly what it cleans up.
 function binarizeCanvas(sourceCanvas) {
     const w = sourceCanvas.width, h = sourceCanvas.height;
     if (!w || !h)
@@ -4316,19 +4347,9 @@ function detectTableGrid(canvas) {
             }
         }
     }
-    // Column threshold is lower than the row one (0.65 vs 0.85) because the two face
-    // different noise sources. A column's coverage is measured down the FULL image height
-    // across every data row, and text content varies row to row (different names, different
-    // digit counts), so there's no equivalent to a header row's bold-text alignment problem
-    // pushing coverage up — a real column border can legitimately come in fainter. Confirmed
-    // against why_delete_this.PNG: the border between "Largest Heal" and "Medic Revives
-    // Performed" is a genuine double-hairline that peaks at 71% coverage on its strongest
-    // pixel column — under the old 0.8 cutoff that border was never detected at all, silently
-    // merging the two columns into one unrecognized "extra" column and dropping Largest Heal
-    // from that report's output with no flag anywhere.
     const colIdx = [];
     for (let x = 0; x < w; x++)
-        if (colGrayCount[x] / h > 0.65)
+        if (colGrayCount[x] / h > 0.8)
             colIdx.push(x);
     const rowIdx = [];
     // A genuine border row is dark across ~98-100% of the width. Bold header text can
@@ -4341,25 +4362,47 @@ function detectTableGrid(canvas) {
     if (!colIdx.length || !rowIdx.length) {
         throw new Error('Could not detect a gridded table in this image. Use a screenshot of the full bordered battle-report table.');
     }
-    // Merge gap widened from 4 to 7px. Adjacent <td> borders can render as two separate
-    // hairlines rather than one solid line — confirmed on commando_game.PNG and
-    // jedi_bf_9-1-26_4.PNG, where every real border showed up as a pair of lines exactly
-    // 5.5px apart, consistently, across 5-7 borders per image. At gap=4 those pairs never
-    // merged, so detectTableGrid found 19-21 "columns" and up to 20 "rows" where there were
-    // really 13. 7px clears that 5.5px pairing with room to spare while staying far below
-    // any real column/row spacing (tens to hundreds of px), so there's no risk of merging
-    // two genuinely distinct columns or rows.
-    const cols = groupIndices(colIdx, 7);
-    const rows = groupIndices(rowIdx, 7);
-    if (cols[0] > 10)
-        cols.unshift(0);
-    if (cols[cols.length - 1] < w - 10)
-        cols.push(w - 1);
-    if (rows[0] > 10)
-        rows.unshift(0);
-    if (rows[rows.length - 1] < h - 10)
-        rows.push(h - 1);
-    return { cols, rows };
+    // Gap widened from 4 to 8: a real border line's own anti-aliasing/compression can
+    // split into two adjacent runs 5-6px apart (confirmed on a real screenshot, where
+    // this doubled several row boundaries and silently merged pairs of real rows into
+    // one garbled crop) — 8 merges runs like that back into one line while staying
+    // far below any real row height (~40px+) or column width (~65px+), so it can't
+    // accidentally merge two genuinely different lines.
+    const cols = groupIndices(colIdx, 8);
+    const rows = groupIndices(rowIdx, 8);
+
+    // A screenshot's own outer frame (or a compression/anti-aliasing artifact right at
+    // the image boundary) can register as its OWN separate boundary a few pixels in
+    // from the true edge, distinct from the table's real border — confirmed on real
+    // screenshots on both axes (a column case at x=0 and x=13.3, a row case at y=2.0
+    // and y=23.3). A fixed pixel threshold can't tell this apart from a genuine short
+    // first row/column: that same ~21px gap was the artifact on one screenshot but the
+    // real (compact) header row on a smaller screenshot where every row was only ~24px
+    // tall. What distinguishes them is scale — relative to each image's own median
+    // gap, not a fixed pixel count. Collapsing and edge-padding are one decision per
+    // edge using the SAME threshold, not two independent passes — doing them
+    // separately let padding immediately re-add a boundary collapsing had just
+    // correctly removed, because padding's own distance check saw the remaining first
+    // boundary as "too far from the edge."
+    function fixEdge(boundaries, hi) {
+        const gaps = [];
+        for (let i = 0; i < boundaries.length - 1; i++)
+            gaps.push(boundaries[i + 1] - boundaries[i]);
+        gaps.sort((a, b) => a - b);
+        const medianGap = gaps.length ? gaps[Math.floor(gaps.length / 2)] : 40;
+        const edgeMargin = Math.min(25, Math.max(10, 0.5 * medianGap));
+        while (boundaries.length >= 2 && boundaries[0] <= edgeMargin && (boundaries[1] - boundaries[0]) <= edgeMargin)
+            boundaries.shift();
+        if (boundaries[0] > edgeMargin)
+            boundaries.unshift(0);
+        while (boundaries.length >= 2 && boundaries[boundaries.length - 1] >= hi - edgeMargin
+            && (boundaries[boundaries.length - 1] - boundaries[boundaries.length - 2]) <= edgeMargin)
+            boundaries.pop();
+        if (boundaries[boundaries.length - 1] < hi - edgeMargin)
+            boundaries.push(hi - 1);
+        return boundaries;
+    }
+    return { cols: fixEdge(cols, w), rows: fixEdge(rows, h) };
 }
 function invertIfDarkBackground(canvas) {
     const ctx = canvas.getContext('2d');
@@ -4468,6 +4511,9 @@ function cellHasInk(cellCanvas) {
     }
     return (darkPixels / totalPixels) > 0.01;
 }
+// Target confidence (Tesseract's own 0-100 score) below which a cell is worth a second,
+// more aggressive attempt rather than just accepting whatever came back first.
+const OCR_CONFIDENCE_TARGET = 70;
 // Digits only, PSM 6 first. Isolated single-character cells are the one case PSM 6
 // doesn't already nail, so a couple of alternate page segmentation modes are kept as a
 // fallback rather than voted across (voting across PSMs on every cell is what caused the
@@ -4475,10 +4521,7 @@ function cellHasInk(cellCanvas) {
 // attempts here deliberately — Tesseract's own confidence score turned out to sometimes
 // be high on a wrong read (confirmed: a garbled header stayed unrecognized because a bad
 // reading scored just above the retry threshold), so the first PSM that returns anything
-// at all wins rather than comparing scores. Confidence is never used to pick a winner or
-// to flag a cell after the fact either — that check used to exist here and in the review
-// table but never actually caught anything worth catching, for the same reason, so it's
-// been removed rather than left in as a check that looks active but isn't.
+// at all wins rather than comparing scores.
 async function ocrNumericCell(worker, cellCanvas) {
     if (!cellCanvas)
         return '0';
@@ -4489,24 +4532,33 @@ async function ocrNumericCell(worker, cellCanvas) {
         if (digits !== '')
             return digits;
     }
-    // Plain crop came back empty on every PSM. One more shot before giving up: run the same
-    // PSM sequence again against an Otsu-binarized version of the same crop, which cleans up
-    // exactly the faint-text/background-tint/compression-noise cases the plain crop struggles
-    // with. Still no confidence involved and still strictly sequential/first-non-blank-wins —
-    // this only ever turns a would-be hard failure into a real reading, it never overrides or
-    // second-guesses a reading the plain crop already produced above.
-    const binarized = binarizeCanvas(cellCanvas);
+    // A digit-only whitelist can backfire on a real font ambiguity: a serif "1" read
+    // as "l" against an unrestricted charset came back completely empty once forced
+    // through a digits-only whitelist, rather than a low-confidence "1" — confirmed
+    // on a real screenshot cell that's unambiguously a single "1" to the eye. Falling
+    // back to an unrestricted read and mapping the same lookalikes cleanOcrNumber()
+    // already knows about (l/I -> 1, O/o -> 0) recovers cases like this. A single
+    // visible "0" also came back as "oO" (plus a border-sliver "|") unrestricted —
+    // the classifier torn between reading it as lowercase/uppercase — so border noise
+    // gets stripped before matching, and a lookalike string that's nothing but the
+    // SAME digit repeated (e.g. "oO" -> "00") is collapsed to one occurrence: that
+    // pattern is a strong signal of one glyph being double-counted, not two real
+    // digits (a genuine repeated digit like "88" reads consistent-case, not mixed).
     for (const psm of ['6', '7', '8']) {
-        await worker.setParameters({ tessedit_pageseg_mode: psm, tessedit_char_whitelist: OCR_NUMERIC_WHITELIST });
-        const { data } = await worker.recognize(binarized);
-        const digits = (data.text || '').replace(/[^0-9]/g, '');
-        if (digits !== '')
-            return digits;
+        await worker.setParameters({ tessedit_pageseg_mode: psm, tessedit_char_whitelist: '' });
+        const { data } = await worker.recognize(cellCanvas);
+        const stripped = (data.text || '').replace(/[|/\\.,'`\s]/g, '');
+        if (stripped && /^[0-9OolI]+$/.test(stripped)) {
+            const mapped = stripped.replace(/O/g, '0').replace(/o/g, '0').replace(/l/g, '1').replace(/I/g, '1');
+            if (new Set(mapped.split('')).size === 1)
+                return mapped[0];
+            return mapped;
+        }
     }
-    // Every PSM, on both the plain and binarized crop, came back with no digits. That's only
-    // trustworthy as a real 0 if the cell is actually visually blank — if there's ink here
-    // that nothing could turn into digits, silently writing '0' would corrupt this exact
-    // number instead of failing loudly.
+    // Every attempt came back with no digits. That's only trustworthy as a real 0 if
+    // the cell is actually visually blank — if there's ink here that nothing could
+    // turn into digits, silently writing '0' would corrupt this exact number instead
+    // of failing loudly.
     if (cellHasInk(cellCanvas))
         return null; // signals a genuine OCR failure, not an empty cell
     return '0';
@@ -4526,16 +4578,6 @@ async function ocrTextCell(worker, cellCanvas) {
         if (txt !== '')
             return txt;
     }
-    // Same last resort as the numeric path: retry the full PSM sequence against an
-    // Otsu-binarized crop before accepting that this cell is genuinely unreadable.
-    const binarized = binarizeCanvas(cellCanvas);
-    for (const psm of ['6', '7', '13']) {
-        await worker.setParameters({ tessedit_pageseg_mode: psm, tessedit_char_whitelist: OCR_TEXT_WHITELIST });
-        const { data } = await worker.recognize(binarized);
-        const txt = (data.text || '').replace(/\s+/g, ' ').trim();
-        if (txt !== '')
-            return txt;
-    }
     return '';
 }
 // Thrown when a required cell comes back with no trustworthy reading after every retry
@@ -4550,24 +4592,6 @@ class OcrRequiredCellError extends Error {
         super(`Could not read the "${fieldLabel}" cell in data row ${rowNumber} of the table — OCR returned no trustworthy value for it after every retry. Refusing to guess a placeholder; please retry with a sharper/higher-resolution screenshot (or crop tighter around the table) and re-convert.`);
         this.name = 'OcrRequiredCellError';
     }
-}
-// Profession and Faction are small, closed vocabularies (unlike Name, which is open-ended),
-// so a garbled OCR read can be safely snapped to the nearest known value the same way
-// headers already are — an exact case-insensitive match is kept as-is, and only a close
-// fuzzy match (e.g. "Bounly Hunter", "Oficer") gets corrected. Anything too far from every
-// known value is left untouched rather than forced into an unrelated one, in case a report
-// ever includes a profession this list doesn't know about yet.
-const OCR_KNOWN_PROFESSIONS = ['Commando', 'Officer', 'Bounty Hunter', 'Smuggler', 'Medic', 'Jedi', 'Spy'];
-const OCR_KNOWN_FACTIONS = ['Blue Team', 'Red Team'];
-function snapToKnownVocabulary(value, knownList) {
-    if (!value)
-        return value;
-    const lowerList = knownList.map(k => k.toLowerCase());
-    const exactIdx = lowerList.indexOf(value.toLowerCase());
-    if (exactIdx !== -1)
-        return knownList[exactIdx];
-    const found = closestByLevenshtein(value.toLowerCase(), lowerList, Math.max(1, Math.floor(value.length * 0.3)));
-    return found ? knownList[lowerList.indexOf(found.match)] : value;
 }
 const KNOWN_HEADER_KEYS = Object.keys(HEADER_FIELD_MAP);
 function matchHeaderField(rawLabel) {
@@ -4682,33 +4706,19 @@ async function parseBattleReportFromGrid(canvas, workerPool, onProgress) {
             throw new OcrRequiredCellError(r, 'Faction');
         const name = rowVals.name;
         const nameSuggestion = closestByLevenshtein(name, knownNames);
-        const damage = cleanOcrNumber(rowVals.damage);
-        const healing = cleanOcrNumber(rowVals.healing);
-        // Run the same implausible-value check upload already enforces (validateAndParseReportHTML),
-        // but right here at parse time instead of only at the "upload to shared market" step. Nothing
-        // unsafe was reaching the market either way, but the row now gets flagged the moment it's
-        // cheapest to fix — in the review table, before you've gone looking for it — instead of only
-        // surfacing as an upload rejection later.
-        const implausible = [];
-        if (damage > MAX_PLAUSIBLE_DAMAGE)
-            implausible.push('damage');
-        if (healing > MAX_PLAUSIBLE_HEALING)
-            implausible.push('healing');
         players.push({
-            name,
-            profession: snapToKnownVocabulary(rowVals.profession, OCR_KNOWN_PROFESSIONS),
-            faction: snapToKnownVocabulary(rowVals.faction, OCR_KNOWN_FACTIONS),
+            name, profession: rowVals.profession, faction: rowVals.faction,
             kills: cleanOcrNumber(rowVals.kills),
             assists: cleanOcrNumber(rowVals.assists),
             deaths: cleanOcrNumber(rowVals.deaths),
-            damage,
+            damage: cleanOcrNumber(rowVals.damage),
             largestHit: cleanOcrNumber(rowVals.largestHit),
             damageTaken: cleanOcrNumber(rowVals.damageTaken),
-            healing,
+            healing: cleanOcrNumber(rowVals.healing),
             largestHeal: cleanOcrNumber(rowVals.largestHeal),
             captures: cleanOcrNumber(rowVals.captures), // 0 for report types with no captures column
             extra,
-            _ocr: { nameSuggestion, implausible, missing: [] }
+            _ocr: { nameSuggestion } // informational only now — every row here already passed every hard check
         });
     }
     if (!players.length)
@@ -4722,6 +4732,9 @@ function ocrInputClass(player, field) {
     const ocr = player._ocr || {};
     if ((ocr.implausible || []).includes(field) || (ocr.missing || []).includes(field))
         return 'ocr-implausible';
+    const conf = ocr.confidence ? ocr.confidence[field] : null;
+    if (typeof conf === 'number' && conf < OCR_CONFIDENCE_TARGET)
+        return 'ocr-low-conf';
     return '';
 }
 function renderOcrReviewTable() {
@@ -4791,7 +4804,7 @@ document.getElementById('ocrReviewTable').addEventListener('input', (e) => {
     if (target.dataset.field) {
         const field = target.dataset.field;
         player[field] = target.value;
-        const ocr = player._ocr || (player._ocr = { missing: [], implausible: [], nameSuggestion: null });
+        const ocr = player._ocr || (player._ocr = { confidence: {}, missing: [], implausible: [], nameSuggestion: null });
         ocr.missing = (ocr.missing || []).filter(f => f !== field);
         if (field === 'damage' || field === 'healing') {
             const n = cleanOcrNumber(target.value);
