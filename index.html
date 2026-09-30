@@ -3948,6 +3948,20 @@ function renderAll() {
         populatePlayerDayLookup();
     }
 }
+// Shared by renderEloTab() and toggleEloPlayer() so the "more than 5 battles,
+// top 100 by Elo" cap can never drift out of sync between the two again --
+// toggleEloPlayer() used to rebuild its own entries list straight from
+// state.elo with neither filter applied, so expanding any player's row
+// silently swapped the whole capped leaderboard for the full, uncapped
+// roster underneath it.
+const ELO_MIN_BATTLES_SHOWN = 5;
+const ELO_MAX_PLAYERS_SHOWN = 100;
+function getEloLeaderboardEntries() {
+    const allEntries = Object.keys(state.elo).map(name => Object.assign({ name }, state.elo[name]));
+    const eligible = allEntries.filter(e => (e.battles || 0) > ELO_MIN_BATTLES_SHOWN);
+    eligible.sort((a, b) => b.elo - a.elo);
+    return { totalCount: allEntries.length, eligible, shown: eligible.slice(0, ELO_MAX_PLAYERS_SHOWN) };
+}
 function renderEloTab() {
     const summaryEl = document.getElementById('eloSummary');
     const bodyEl = document.getElementById('eloBody');
@@ -3962,20 +3976,15 @@ function renderEloTab() {
         spreadEl.textContent = PRICE_SCALE_SETTINGS.spread;
     if (topEl)
         topEl.textContent = fmtMoney(PRICE_SCALE_SETTINGS.top);
-    const allEntries = Object.keys(state.elo).map(name => Object.assign({ name }, state.elo[name]));
     // Only players with enough of a track record (>5 battles) to be a meaningful
     // rating, and capped at the top 100 by Elo -- a full roster listing puts every
     // low-battle-count or poor-showing player's name and record on public display,
     // which isn't something this page needs to do.
-    const MIN_BATTLES_SHOWN = 5;
-    const MAX_PLAYERS_SHOWN = 100;
-    const eligible = allEntries.filter(e => (e.battles || 0) > MIN_BATTLES_SHOWN);
-    eligible.sort((a, b) => b.elo - a.elo);
-    const hiddenForBattles = allEntries.length - eligible.length;
-    const entries = eligible.slice(0, MAX_PLAYERS_SHOWN);
+    const { totalCount, eligible, shown: entries } = getEloLeaderboardEntries();
+    const hiddenForBattles = totalCount - eligible.length;
     if (entries.length === 0) {
         summaryEl.innerHTML = '';
-        bodyEl.innerHTML = '<tr><td colspan="6" class="empty-state">No players with more than ' + MIN_BATTLES_SHOWN + ' battles yet.</td></tr>';
+        bodyEl.innerHTML = '<tr><td colspan="6" class="empty-state">No players with more than ' + ELO_MIN_BATTLES_SHOWN + ' battles yet.</td></tr>';
         if (eloChart) {
             eloChart.destroy();
             eloChart = null;
@@ -3983,13 +3992,13 @@ function renderEloTab() {
         return;
     }
     const avg = entries.reduce((s, e) => s + e.elo, 0) / entries.length;
-    const cappedNote = eligible.length > MAX_PLAYERS_SHOWN ? ' (top ' + MAX_PLAYERS_SHOWN + ' of ' + eligible.length + ' eligible)' : '';
+    const cappedNote = eligible.length > ELO_MAX_PLAYERS_SHOWN ? ' (top ' + ELO_MAX_PLAYERS_SHOWN + ' of ' + eligible.length + ' eligible)' : '';
     summaryEl.innerHTML =
         '<div class="stat"><div class="label">PLAYERS SHOWN</div><div class="value">' + entries.length + cappedNote + '</div></div>'
             + '<div class="stat"><div class="label">HIGHEST</div><div class="value elo-pos">' + escapeHtml(entries[0].name) + ' · ' + Math.round(entries[0].elo) + '</div></div>'
             + '<div class="stat"><div class="label">LOWEST</div><div class="value elo-neg">' + escapeHtml(entries[entries.length - 1].name) + ' · ' + Math.round(entries[entries.length - 1].elo) + '</div></div>'
             + '<div class="stat"><div class="label">AVERAGE</div><div class="value">' + Math.round(avg) + '</div></div>'
-            + (hiddenForBattles > 0 ? '<div class="stat"><div class="label">NOT SHOWN</div><div class="value" style="font-size:12px;">' + hiddenForBattles + ' with ' + MIN_BATTLES_SHOWN + ' or fewer battles</div></div>' : '');
+            + (hiddenForBattles > 0 ? '<div class="stat"><div class="label">NOT SHOWN</div><div class="value" style="font-size:12px;">' + hiddenForBattles + ' with ' + ELO_MIN_BATTLES_SHOWN + ' or fewer battles</div></div>' : '');
     bodyEl.innerHTML = buildEloBodyHtml(entries);
     renderEloChart(entries);
 }
@@ -4011,7 +4020,10 @@ function toggleEloPlayer(name) {
     const bodyEl = document.getElementById('eloBody');
     if (!bodyEl)
         return;
-    const entries = Object.keys(state.elo).map(n => Object.assign({ name: n }, state.elo[n])).sort((a, b) => b.elo - a.elo);
+    // Same capped/filtered list renderEloTab() uses -- NOT every name in
+    // state.elo (see getEloLeaderboardEntries()'s comment for why that was
+    // wrong before).
+    const { shown: entries } = getEloLeaderboardEntries();
     bodyEl.innerHTML = buildEloBodyHtml(entries);
     if (expandedEloPlayer) {
         const row = bodyEl.querySelector('.class-expand-row');
