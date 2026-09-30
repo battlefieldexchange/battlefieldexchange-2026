@@ -460,6 +460,9 @@
           <div class="admin-note" style="margin-top:16px;">Find NEW name mismatches automatically — compares every report's raw numbers (damage/healing/assists/deaths) against every other report, completely ignoring the name field. When two reports have an identical stats fingerprint but different player names, that's almost certainly the same battle read twice with a name garbled by OCR. Unlike the scan above, this doesn't require you to already know which name is wrong — it's how you find the ones you haven't grouped yet. Nothing is deleted or changed here; it only suggests groups for you to review and save above.</div>
           <button class="debug-btn" id="dbgFindNameMismatches">Find likely name-mismatch duplicates</button>
           <div id="nameMismatchResults" style="margin-top:10px; font-size:12px; color:var(--text-dim); white-space:pre-line; max-height:300px; overflow-y:auto;"></div>
+          <div class="admin-note" style="margin-top:16px;">Find likely misreads by SPELLING alone — no duplicate battle needed, unlike the tool above. This is what catches a name an export source gets wrong every single time (e.g. a stray extra letter tacked onto an otherwise-correct name), since there's no correctly-spelled copy anywhere to cross-check against. Compares every known name against every other; a name that's some other established name plus one extra character is flagged high-confidence regardless of how often each spelling shows up (a consistent misread can easily be the MORE common one), while two same-length names differing by one character only get suggested when one is clearly the established spelling. Nothing is written until you check boxes below and apply.</div>
+          <button class="debug-btn" id="dbgFindMisreadGroups">Scan for likely misread groups (auto-detect)</button>
+          <div id="misreadGroupResults" style="margin-top:10px; font-size:12px; color:var(--text-dim); white-space:pre-line; max-height:400px; overflow-y:auto;"></div>
           <div class="admin-note" style="margin-top:16px;">Look up which days a player appears on, across every spelling grouped to them — a gap in an otherwise-active player's day range usually means that day's export misspelled them in a way that isn't grouped yet.</div>
           <div class="field"><label>Player</label><select id="playerDayLookupSelect" style="width:100%;"><option value="">— pick a player —</option></select></div>
           <div id="playerDayLookupResults" style="margin-top:10px; font-size:12px; color:var(--text-dim); white-space:pre-line; max-height:300px; overflow-y:auto;"></div>
@@ -1246,6 +1249,122 @@ async function applyNameAliasUpdate(newMap) {
         console.error('[bfx] Failed to republish price snapshot after alias change:', syncErr);
         return false;
     }
+}
+// Finds likely OCR-misread name variants from spelling alone, with no need for a
+// duplicate battle to cross-check against — unlike dbgFindNameMismatches below
+// (which needs two copies of the same battle's stats to compare), this catches a
+// name that's ALWAYS read wrong by some export source, where the correct spelling
+// may never once have been submitted on its own to compare against. Every raw
+// name not already covered by an alias is compared against every other; a
+// same-length substitution only ever suggests a direction when one spelling is
+// clearly the established one (seen 3+ times and at least 3x more often than the
+// other) since the strings alone don't say which is correct — but a one-character
+// INSERTION (one name is the other plus exactly one extra letter) always suggests
+// the shorter string, regardless of occurrence counts, because that's structurally
+// what "OCR added a spurious character" looks like: if a source consistently
+// mis-adds a letter, the broken spelling could easily be seen MORE often than the
+// correct one, so counts can't be trusted to pick a direction here. Each name is
+// only ever proposed as a variant of its single best-scoring match; nothing here
+// writes anything — see renderMisreadGroups()/the Apply button for that.
+function findMisreadNameGroups() {
+    const counts = collectKnownPlayerNameCounts();
+    const aliasKeys = new Set(Object.keys(NAME_ALIASES));
+    const names = Object.keys(counts).filter(n => !aliasKeys.has(n));
+    const claimed = new Set();
+    const suggestions = [];
+    for (let i = 0; i < names.length; i++) {
+        const a = names[i];
+        if (claimed.has(a))
+            continue;
+        // Trailing " j" artifact -- checked first, independent of the pairwise
+        // scan below. If a source consistently mis-adds this on EVERY sighting
+        // of a given player, the clean form might have zero occurrences of its
+        // own to pair `a` against, so this can't wait for a matching `b` the
+        // way the other two checks do -- the pattern alone is the signal.
+        const stripped = stripTrailingJArtifact(a);
+        if (stripped && stripped !== a) {
+            suggestions.push({ canonical: stripped, variant: a, kind: 'trailing-j-space', score: 4, variantCount: counts[a] || 0, canonicalCount: counts[stripped] || 0 });
+            claimed.add(a);
+            continue;
+        }
+        let best = null;
+        for (let j = 0; j < names.length; j++) {
+            const b = names[j];
+            if (i === j || claimed.has(b))
+                continue;
+            let canonical = null, variant = null, kind = null;
+            if (Math.abs(a.length - b.length) === 1) {
+                const [longer, shorter] = a.length > b.length ? [a, b] : [b, a];
+                // Require the shorter/canonical side to already be reasonably
+                // established (3+ sightings) before suggesting anything — otherwise
+                // two short, brand-new, coincidentally similar names (real distinct
+                // players) could get flagged on the strength of one appearance each.
+                if (counts[shorter] >= 3 && isSingleCharInsertion(longer, shorter)) {
+                    canonical = shorter; variant = longer;
+                    kind = insertedChar(longer, shorter).toLowerCase() === 'j' ? 'insertion-j' : 'insertion';
+                }
+            }
+            else if (a.length === b.length && singleCharSubstitution(a, b)) {
+                const more = counts[a] >= counts[b] ? a : b;
+                const less = more === a ? b : a;
+                if (counts[more] >= 3 && counts[more] >= counts[less] * 3) {
+                    canonical = more; variant = less; kind = 'substitution';
+                }
+            }
+            if (!canonical || variant !== a)
+                continue; // only build the suggestion from a's perspective this pass
+            const score = kind === 'insertion-j' ? 3 : kind === 'insertion' ? 2 : 1;
+            if (!best || score > best.score)
+                best = { canonical, variant, kind, score, variantCount: counts[variant] || 0, canonicalCount: counts[canonical] || 0 };
+        }
+        if (best) {
+            suggestions.push(best);
+            claimed.add(best.variant);
+        }
+    }
+    return suggestions.sort((x, y) => y.score - x.score);
+}
+function renderMisreadGroups(suggestions) {
+    const out = document.getElementById('misreadGroupResults');
+    if (!out)
+        return;
+    if (!suggestions.length) {
+        out.textContent = 'No likely misread groups found — every remaining ungrouped name looks like a genuinely distinct player.';
+        return;
+    }
+    const kindLabel = { 'trailing-j-space': 'trailing " j"', 'insertion-j': 'extra "j"', 'insertion': 'extra character', 'substitution': 'one character differs' };
+    out.innerHTML = '<div style="color:var(--amber); margin-bottom:8px;">' + suggestions.length + ' likely misread group(s) — review, then apply:</div>' +
+        '<div style="margin-bottom:8px;"><button type="button" class="debug-btn" id="misreadCheckAllHigh" style="padding:2px 8px;">Check all high-confidence</button> <button type="button" class="debug-btn" id="misreadCheckNone" style="padding:2px 8px;">Uncheck all</button></div>' +
+        suggestions.map((s, i) => '<label style="display:block; padding:3px 0; border-bottom:1px solid var(--line);">' +
+            '<input type="checkbox" data-misread-idx="' + i + '" ' + (s.kind !== 'substitution' ? 'checked' : '') + '> ' +
+            '"' + escapeHtml(s.variant) + '" (seen ' + s.variantCount + '&times;) &rarr; <b>"' + escapeHtml(s.canonical) + '"</b> (seen ' + s.canonicalCount + '&times;) ' +
+            '<span style="color:var(--text-dim);">— ' + kindLabel[s.kind] + '</span></label>').join('') +
+        '<button type="button" class="debug-btn" id="misreadApplyChecked" style="margin-top:10px;">Apply checked groups</button>';
+    document.getElementById('misreadCheckAllHigh').addEventListener('click', () => {
+        out.querySelectorAll('[data-misread-idx]').forEach((cb, i) => { cb.checked = suggestions[i].kind !== 'substitution'; });
+    });
+    document.getElementById('misreadCheckNone').addEventListener('click', () => {
+        out.querySelectorAll('[data-misread-idx]').forEach(cb => { cb.checked = false; });
+    });
+    document.getElementById('misreadApplyChecked').addEventListener('click', async () => {
+        const idxs = Array.from(out.querySelectorAll('[data-misread-idx]:checked')).map(cb => Number(cb.dataset.misreadIdx));
+        if (!idxs.length)
+            return;
+        const newMap = { ...NAME_ALIASES };
+        idxs.forEach(i => { const s = suggestions[i]; if (s.variant !== s.canonical) newMap[s.variant] = s.canonical; });
+        const btn = document.getElementById('misreadApplyChecked');
+        btn.disabled = true;
+        btn.textContent = 'Applying…';
+        try {
+            const synced = await applyNameAliasUpdate(newMap);
+            out.innerHTML = '<div style="color:var(--phosphor);">Applied ' + idxs.length + ' group(s).' + (synced ? '' : ' Price re-sync failed — trades under old names may lag until the next report.') + '</div>';
+        }
+        catch (err) {
+            btn.disabled = false;
+            btn.textContent = 'Apply checked groups';
+            alert('Failed: ' + err.message);
+        }
+    });
 }
 async function saveNameGroup() {
     if (!state.isAdmin)
@@ -2562,6 +2681,11 @@ document.getElementById('dbgFindNameMismatches').addEventListener('click', async
         canonicalInput.focus();
         canonicalInput.scrollIntoView({ behavior: 'smooth', block: 'center' });
     }));
+});
+document.getElementById('dbgFindMisreadGroups').addEventListener('click', () => {
+    const out = document.getElementById('misreadGroupResults');
+    out.textContent = 'Comparing every known name against every other by spelling…';
+    renderMisreadGroups(findMisreadNameGroups());
 });
 document.getElementById('dbgMigrateReports').addEventListener('click', async () => {
     const out = document.getElementById('dupeResults');
@@ -4268,6 +4392,90 @@ function closestByLevenshtein(target, candidates, maxDistance) {
     const limit = maxDistance != null ? maxDistance : Math.max(1, Math.floor(target.length * 0.25));
     return bestDist <= limit ? { match: best, distance: bestDist } : null;
 }
+// Two small, direct (non-DP) checks used by both the upload-time auto-fix and the
+// admin-facing "find likely misread groups" tool below. Kept separate from the
+// generic levenshtein()/closestByLevenshtein() above (still used by the OCR
+// "did you mean" hint) because both callers here need to know WHICH kind of
+// single-character difference two names have, not just the distance -- an
+// inserted character (what "OCR added a trailing j" looks like) has an obvious,
+// trustworthy fix direction (the shorter string is right); a substituted
+// character in a same-length name does not, and has to fall back on which
+// spelling has actually been seen more.
+function isSingleCharInsertion(longer, shorter) {
+    if (longer.length !== shorter.length + 1)
+        return false;
+    let i = 0, j = 0, skippedOne = false;
+    while (i < longer.length && j < shorter.length) {
+        if (longer[i] === shorter[j]) { i++; j++; }
+        else if (!skippedOne) { skippedOne = true; i++; }
+        else return false;
+    }
+    return true;
+}
+// Returns the single character `longer` has that `shorter` doesn't — only call
+// this after isSingleCharInsertion() has already confirmed that relationship.
+function insertedChar(longer, shorter) {
+    let i = 0, j = 0;
+    while (i < longer.length && j < shorter.length) {
+        if (longer[i] === shorter[j]) { i++; j++; }
+        else return longer[i];
+    }
+    return longer[i]; // the extra character was on the very end
+}
+function singleCharSubstitution(a, b) {
+    if (a.length !== b.length)
+        return false;
+    let diffs = 0;
+    for (let i = 0; i < a.length; i++)
+        if (a[i] !== b[i] && ++diffs > 1)
+            return false;
+    return diffs === 1;
+}
+function collectKnownPlayerNameCounts() {
+    const counts = {};
+    state.reports.forEach(rep => (rep.players || []).forEach(p => { if (p.name)
+        counts[p.name] = (counts[p.name] || 0) + 1; }));
+    return counts;
+}
+// The exact bug the user described: a trailing "j" with a SPACE before it (e.g.
+// "Zaneth j", not "Zanethj") -- two extra characters, not one, so it does NOT
+// match isSingleCharInsertion() below and needed its own check. A floating space
+// followed by a single lone letter is not a shape any real player name has, so
+// unlike the general insertion check this doesn't need to cross-check occurrence
+// counts first: the pattern itself is the signal. Case-insensitive on the J since
+// OCR case on a single stray character isn't reliable either way.
+function stripTrailingJArtifact(name) {
+    const m = /^(.*\S)\s+[jJ]$/.exec(name || '');
+    return m ? m[1] : null;
+}
+// Auto-fix path for OCR name-misreads. Unlike the "did you mean" hint below
+// (which just suggests and leaves the row alone), this actually rewrites the
+// name before the row is stored -- needed because the Discord bot uploads
+// reports headlessly and can't click a hint, so without this every affected
+// bot-submitted report needs admin cleanup forever. Checks the trailing-" j"
+// artifact first (see stripTrailingJArtifact above -- no count check needed,
+// the shape alone is unambiguous), then falls back to the general "one extra
+// character inserted somewhere, no space" case, which DOES require the
+// shorter candidate to already be well-established (seen 3+ times) since that
+// shape alone isn't as clearly an artifact -- a genuinely new player's name
+// shouldn't get silently rewritten into an existing player's just because
+// they happen to be one character apart.
+function autoFixInsertionMisread(rawName, nameCounts) {
+    if (!rawName)
+        return null;
+    const stripped = stripTrailingJArtifact(rawName);
+    if (stripped)
+        return stripped;
+    for (const known in nameCounts) {
+        if (known === rawName)
+            return null;
+        if (nameCounts[known] < 3)
+            continue;
+        if (isSingleCharInsertion(rawName, known))
+            return known;
+    }
+    return null;
+}
 // Otsu's method: finds the brightness cutoff that best separates a cell's pixels into
 // two clean clusters (ink vs background) by maximizing between-class variance, then
 // snaps every pixel to pure black or white at that cutoff. This is a much stronger,
@@ -4680,6 +4888,7 @@ async function parseBattleReportFromGrid(canvas, workerPool, onProgress) {
     }
     await Promise.all(workerPool.map(w => runWorker(w)));
     const knownNames = collectKnownPlayerNames();
+    const nameCounts = collectKnownPlayerNameCounts();
     const players = [];
     for (let r = 1; r < nRows; r++) {
         const rowVals = {};
@@ -4704,8 +4913,10 @@ async function parseBattleReportFromGrid(canvas, workerPool, onProgress) {
             throw new OcrRequiredCellError(r, 'Profession');
         if (!rowVals.faction)
             throw new OcrRequiredCellError(r, 'Faction');
-        const name = rowVals.name;
-        const nameSuggestion = closestByLevenshtein(name, knownNames);
+        const rawName = rowVals.name;
+        const autoFixedFrom = autoFixInsertionMisread(rawName, nameCounts);
+        const name = autoFixedFrom || rawName;
+        const nameSuggestion = autoFixedFrom ? null : closestByLevenshtein(name, knownNames);
         players.push({
             name, profession: rowVals.profession, faction: rowVals.faction,
             kills: cleanOcrNumber(rowVals.kills),
@@ -4718,7 +4929,7 @@ async function parseBattleReportFromGrid(canvas, workerPool, onProgress) {
             largestHeal: cleanOcrNumber(rowVals.largestHeal),
             captures: cleanOcrNumber(rowVals.captures), // 0 for report types with no captures column
             extra,
-            _ocr: { nameSuggestion } // informational only now — every row here already passed every hard check
+            _ocr: { nameSuggestion, autoFixedFrom } // nameSuggestion is informational only — every row here already passed every hard check; autoFixedFrom means the name field above was already rewritten
         });
     }
     if (!players.length)
@@ -4755,7 +4966,9 @@ function renderOcrReviewTable() {
             const cls = ocrInputClass(p, field);
             const val = p[field] == null ? '' : p[field];
             html += `<td><input data-row="${i}" data-field="${field}" class="${cls}" value="${htmlEscape(val)}">`;
-            if (field === 'name' && p._ocr && p._ocr.nameSuggestion)
+            if (field === 'name' && p._ocr && p._ocr.autoFixedFrom)
+                html += `<div class="ocr-name-suggest" data-row="${i}" style="color:var(--phosphor); cursor:default;">auto-corrected from "${htmlEscape(p._ocr.autoFixedFrom)}" (looked like a misread)</div>`;
+            else if (field === 'name' && p._ocr && p._ocr.nameSuggestion)
                 html += `<div class="ocr-name-suggest" data-row="${i}" data-apply-suggestion="${htmlEscape(p._ocr.nameSuggestion.match)}">did you mean "${htmlEscape(p._ocr.nameSuggestion.match)}"?</div>`;
             html += '</td>';
         });
