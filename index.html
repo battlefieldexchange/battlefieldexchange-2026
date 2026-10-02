@@ -738,9 +738,27 @@ const FACTION_ALIASES = {
     imperial: 'Imperial', blue: 'Imperial',
     rebel: 'Rebel', red: 'Rebel',
 };
+// There are only ever two real factions in this game, unlike profession (an
+// open-ended vocabulary this app has no complete authoritative list for) --
+// which makes it safe to fuzzy-match a near-miss spelling back to one of them.
+// This matters more here than almost anywhere else in the OCR pipeline:
+// factionGroups() below only runs the proper team-vs-team Elo formula when a
+// battle has EXACTLY two distinct faction values. A single garbled reading
+// (the reported trailing-"j" bug, or any other one-character misread — e.g.
+// "Rebel j" or "lmperial") that isn't caught here creates a THIRD, spurious
+// faction key, which silently drops that entire report -- every player in it,
+// not just the misread one -- into the free-for-all Elo formula instead of
+// the team-based one.
+const KNOWN_FACTIONS = ['Imperial', 'Rebel'];
 function normalizeFactionSide(faction) {
     const key = String(faction || '').trim().toLowerCase();
-    return FACTION_ALIASES[key] || (String(faction || 'Unknown').trim() || 'Unknown');
+    if (FACTION_ALIASES[key])
+        return FACTION_ALIASES[key];
+    const raw = String(faction || '').trim();
+    if (!raw)
+        return 'Unknown';
+    const found = closestByLevenshtein(raw, KNOWN_FACTIONS, Math.max(1, Math.floor(raw.length * 0.3)));
+    return found ? found.match : raw; // no close match -- preserve whatever was actually read rather than guess
 }
 function factionGroups(rows) {
     const byFaction = {};
