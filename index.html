@@ -211,6 +211,15 @@
   .player-link{cursor:pointer; text-decoration:underline dotted; text-underline-offset:3px;}
   .player-link:hover{color:var(--phosphor);}
   .class-expand-row td{padding:0; border-bottom:1px solid var(--line);}
+  .day-link{color:var(--phosphor); cursor:pointer; text-decoration:underline; text-decoration-style:dotted; text-underline-offset:2px;}
+  .day-link:hover{color:var(--text);}
+  .day-modal{position:fixed; inset:0; z-index:500; display:flex; align-items:center; justify-content:center; padding:24px;}
+  .day-modal.hidden{display:none;}
+  .day-modal-backdrop{position:absolute; inset:0; background:rgba(2,8,8,0.72);}
+  .day-modal-panel{position:relative; width:min(1200px, 100%); max-height:88vh; display:flex; flex-direction:column;}
+  .day-modal-panel .panel-body{overflow:auto;}
+  .day-modal-panel table.history{font-size:12.5px;}
+  .day-modal-panel td.stat-flagged{color:var(--red); font-weight:700;}
   .class-expand{background:var(--panel-2); border-left:2px solid var(--phosphor-dim); padding:12px 16px; margin:2px 0;}
   .class-expand-meta{color:var(--text-dim); font-size:12px; margin-bottom:8px;}
   .class-row{display:flex; justify-content:space-between; align-items:center; padding:6px 0; border-bottom:1px solid var(--line); font-size:13px;}
@@ -358,7 +367,7 @@
   <div class="grid">
     <div style="display:flex; flex-direction:column; gap:20px;">
 
-      <section class="panel">
+      <section class="panel hidden" id="battleReportUploadPanel">
         <div class="panel-head">
           <h2>Battle Reports</h2>
           <span class="sub">upload a BATTLEFIELD_OVER.html — the market updates for everyone instantly</span>
@@ -434,7 +443,7 @@
           <div class="admin-note" style="margin-top:16px;">If buying stock specifically fails with "Missing or insufficient permissions" (selling still works): attempts a real, zero-quantity buy-shaped write against your own account using a live symbol and its actual current price — the exact same shape a real purchase uses, status="open" included — then deletes it immediately. Read-only in effect; your real cash and positions are never touched.</div>
           <button class="debug-btn" id="dbgDiagnoseBuyPerms">Diagnose stock buy permission error</button>
           <div id="buyDiagResults" style="margin-top:10px; font-size:12px; color:var(--text-dim); white-space:pre-line;"></div>
-          <div class="admin-note" style="margin-top:16px;">If options/writes fail with "Missing or insufficient permissions" (stock trading unaffected): tests whether your positions security rule was updated for the newer option/write fields (side, strike, expiryDay, premium, settlePrice) alongside the older stock-only shape. Writes disposable, zero-value test positions under your own account and deletes each immediately; your real cash and positions are never touched.</div>
+          <div class="admin-note" style="margin-top:16px;">If options/writes fail with "Missing or insufficient permissions" (stock trading unaffected): tests whether your positions security rule was updated for the newer option/write fields (side, strike, expiryDay, expiresAt, premium, settlePrice) alongside the older stock-only shape. Writes disposable, zero-value test positions under your own account and deletes each immediately; your real cash and positions are never touched.</div>
           <button class="debug-btn" id="dbgDiagnoseTradePerms">Diagnose option/write trade permission error</button>
           <div id="tradeDiagResults" style="margin-top:10px; font-size:12px; color:var(--text-dim); white-space:pre-line;"></div>
           <div class="debug-inline" style="margin-top:10px;">
@@ -466,6 +475,18 @@
           <div class="admin-note" style="margin-top:16px;">Look up which days a player appears on, across every spelling grouped to them — a gap in an otherwise-active player's day range usually means that day's export misspelled them in a way that isn't grouped yet.</div>
           <div class="field"><label>Player</label><select id="playerDayLookupSelect" style="width:100%;"><option value="">— pick a player —</option></select></div>
           <div id="playerDayLookupResults" style="margin-top:10px; font-size:12px; color:var(--text-dim); white-space:pre-line; max-height:300px; overflow-y:auto;"></div>
+
+          <div class="admin-note" style="margin-top:16px;">Delete every report in a day range — e.g. a batch that landed under the wrong days because an export got uploaded with a bad date. Shows exactly which reports will be removed first; nothing is deleted until you confirm that list. Permanent — there's no undo.</div>
+          <div class="field" style="display:flex; gap:8px; align-items:flex-end;">
+            <div style="flex:1;"><label>From day</label><input type="number" id="deleteRangeFrom" min="1"></div>
+            <div style="flex:1;"><label>To day (inclusive)</label><input type="number" id="deleteRangeTo" min="1"></div>
+            <button class="debug-btn" id="dbgPreviewDeleteRange">Preview</button>
+          </div>
+          <div id="deleteRangeResults" style="margin-top:10px; font-size:12px; color:var(--text-dim); white-space:pre-line; max-height:300px; overflow-y:auto;"></div>
+
+          <div class="admin-note" style="margin-top:16px;">Reports with an unrecognized class or an implausible stat value are automatically excluded from Elo/prices/stats everywhere — this just lists which ones, and why, so you can review them (click a day to open the full report) and delete the bad ones with the tool above once you've confirmed they're really bad. Refreshes from the current session's cached reports — re-open this panel after reloading if you've uploaded or deleted anything since.</div>
+          <button class="debug-btn" id="dbgShowInvalidReports">Show invalid / excluded reports</button>
+          <div id="invalidReportsResults" style="margin-top:10px; font-size:12px; color:var(--text-dim); white-space:pre-line; max-height:400px; overflow-y:auto;"></div>
         </div>
       </section>
 
@@ -518,7 +539,7 @@
             <div class="field"><label>Notional payout if triggered ($)</label><input type="number" id="swapNotional" min="1" step="1" value="500"></div>
           </div>
 
-          <div class="field"><label>Expires in (future reports)</label><input type="number" id="optExpiry" min="1" step="1" value="2"></div>
+          <div class="field"><label>Expires in (real days from now)</label><input type="number" id="optExpiry" min="1" step="1" value="1"></div>
           <div class="field"><label>Contracts</label><input type="number" id="optQty" min="1" step="1" value="1"></div>
 
           <div class="premium-box" id="premiumBox">
@@ -660,6 +681,10 @@
         <div class="chart-wrap" style="padding:0 0 18px;">
           <canvas id="eloChart" height="130"></canvas>
         </div>
+        <div style="margin:4px 0 18px; padding-top:14px; border-top:1px solid var(--line);">
+          <div style="font-family:var(--display); font-weight:700; color:var(--phosphor); font-size:14px; margin-bottom:10px;">Top Stats <span style="color:var(--text-dim); font-weight:400; font-size:11px;">— highest single-battle performance on record, across every report ever uploaded</span></div>
+          <div class="elo-summary" id="eloTopStats"></div>
+        </div>
         <div style="overflow-x:auto;">
           <table class="history">
             <thead><tr><th>Rank</th><th>Player</th><th>Class</th><th>Elo</th><th>W-L-D</th><th>Battles</th></tr></thead>
@@ -689,6 +714,22 @@
 
 </div>
 
+<!-- Admin-only drill-down: view every player's full stat row for one specific
+     day/report, opened from a "Day X" link next to an Elo/Top-Stats figure that
+     looks wrong -- lets an admin inspect the actual source data behind a number
+     instead of taking an aggregate on faith. Hidden by default; openDayDetail()
+     below only ever gets wired to fire for state.isAdmin. -->
+<div id="dayDetailModal" class="day-modal hidden">
+  <div class="day-modal-backdrop" id="dayDetailBackdrop"></div>
+  <div class="panel day-modal-panel">
+    <div class="panel-head">
+      <h2 id="dayDetailTitle">Day —</h2>
+      <button class="close-btn" id="dayDetailClose" type="button">&times;</button>
+    </div>
+    <div class="panel-body" id="dayDetailBody"></div>
+  </div>
+</div>
+
 <script type="module">import { initializeApp } from "https://www.gstatic.com/firebasejs/10.13.1/firebase-app.js";
 import { getAuth, onAuthStateChanged, createUserWithEmailAndPassword, signInWithEmailAndPassword, signOut } from "https://www.gstatic.com/firebasejs/10.13.1/firebase-auth.js";
 import { getFirestore, doc, getDoc, getDocs, setDoc, updateDoc, deleteDoc, collection, addDoc, onSnapshot, query, orderBy, where, getCountFromServer, runTransaction, serverTimestamp, writeBatch, Timestamp } from "https://www.gstatic.com/firebasejs/10.13.1/firebase-firestore.js";
@@ -705,7 +746,7 @@ const auth = getAuth(app);
 const db = getFirestore(app);
 const state = {
     uid: null, username: null, isAdmin: false,
-    reports: [], day: 0, players: {}, elo: {},
+    reports: [], day: 0, players: {}, elo: {}, invalidReports: [],
     cash: 10000, realized: 0, positions: [],
     selectedSymbols: new Set(), tradeType: 'call', tradeSide: 'buy', historyFilter: 'all', assetSymbol: '', tickerSearch: '',
     bets: [], historicalBets: [], myWagers: [], betFilter: 'open'
@@ -717,6 +758,24 @@ const state = {
 // lets something driving the page via Playwright read the current roster.
 window.__bfxState = state;
 const ELO_START = 1500;
+const MS_PER_DAY = 24 * 60 * 60 * 1000;
+// Human-readable countdown for a real wall-clock expiry (e.g. "18h 42m", "2d 3h",
+// "expired"). Used anywhere a position shows time remaining instead of the old
+// "N reports away" framing.
+function formatTimeRemaining(expiresAt) {
+    const ms = expiresAt - Date.now();
+    if (ms <= 0)
+        return 'expired';
+    const totalMinutes = Math.ceil(ms / 60000);
+    const days = Math.floor(totalMinutes / 1440);
+    const hours = Math.floor((totalMinutes % 1440) / 60);
+    const minutes = totalMinutes % 60;
+    if (days > 0)
+        return days + 'd ' + hours + 'h';
+    if (hours > 0)
+        return hours + 'h ' + minutes + 'm';
+    return minutes + 'm';
+}
 function kFactorFor(battles) {
     if (battles < 10)
         return 40;
@@ -724,10 +783,51 @@ function kFactorFor(battles) {
         return 24;
     return 16;
 }
+// The complete, authoritative list of classes in this game. Closed set — unlike
+// player names (an open-ended space where a never-seen-before name is always
+// plausible), there is no such thing as a legitimately new or custom class, so
+// anything read that isn't one of these nine (or an unambiguous near-miss
+// misread of one) is a hard rejection at upload time, not a soft suggestion.
+const KNOWN_PROFESSIONS = ['Officer', 'Commando', 'Jedi', 'Medic', 'Bounty Hunter', 'Smuggler', 'Spy', 'Trader', 'Entertainer'];
+const PROFESSION_LOOKUP = new Map(KNOWN_PROFESSIONS.map(p => [p.toLowerCase(), p]));
+// Resolves a raw profession string -- freshly OCR'd, or already sitting in an
+// older report from before this list was enforced -- to one of the exact nine
+// known classes above, or null if it isn't close to any of them. Exact
+// (case-insensitive) match first; otherwise a fuzzy match against this SAME
+// fixed, small, complete list. Auto-snapping on a fuzzy match is safe here in
+// a way it ISN'T for the general name-misread detector earlier in this file:
+// there, a near-miss might really be two different real players, because the
+// name space is unbounded; here, the list is closed and complete, so a
+// near-miss has nowhere else to legitimately be.
+function canonicalProfession(raw) {
+    let trimmed = String(raw || '').trim();
+    if (!trimmed)
+        return null;
+    const exact = PROFESSION_LOOKUP.get(trimmed.toLowerCase());
+    if (exact)
+        return exact;
+    // Same trailing-" j" artifact as stripTrailingJArtifact() handles for names — two
+    // extra characters (a space, then a letter), not one, so the fuzzy match below
+    // (which only tolerates small edit distances) wouldn't catch it on its own. Caught
+    // this via the standalone test for this function before shipping, not by guessing.
+    const stripped = stripTrailingJArtifact(trimmed);
+    if (stripped) {
+        const strippedExact = PROFESSION_LOOKUP.get(stripped.toLowerCase());
+        if (strippedExact)
+            return strippedExact;
+        trimmed = stripped; // fall through to the fuzzy match below on the cleaned string
+    }
+    const found = closestByLevenshtein(trimmed, KNOWN_PROFESSIONS, Math.max(1, Math.floor(trimmed.length * 0.3)));
+    return found ? found.match : null;
+}
 const MEDIC_WEIGHTS = { damage: 0.15, healing: 0.45, kills: 0.00, assists: 0.20, deaths: 0.40 };
 const DPS_WEIGHTS = { damage: 0.35, healing: 0.00, kills: 0.05, assists: 0.25, deaths: 0.35 };
 function eloWeightsFor(profession) {
-    return normProf(profession) === 'medic' ? MEDIC_WEIGHTS : DPS_WEIGHTS;
+    // canonicalProfession() falls back to the raw value on older data that
+    // somehow still doesn't resolve, rather than silently defaulting to
+    // DPS_WEIGHTS — normProf() below still catches it if that raw value
+    // happens to already BE "medic".
+    return normProf(canonicalProfession(profession) || profession) === 'medic' ? MEDIC_WEIGHTS : DPS_WEIGHTS;
 }
 function teamCombatScore(rows) {
     let deaths = 0;
@@ -916,6 +1016,11 @@ onAuthStateChanged(auth, async (user) => {
     }
     document.getElementById('debugPanel').classList.toggle('hidden', !state.isAdmin);
     document.getElementById('adminPill').classList.toggle('hidden', !state.isAdmin);
+    // UI convenience only — the actual boundary preventing a regular trader from
+    // uploading is the Firestore rule on reports/{reportId}.create (isAdmin()
+    // now, was isSignedIn()). Covers the Discord bot's account too, since it's
+    // already in admins/{uid}.
+    document.getElementById('battleReportUploadPanel').classList.toggle('hidden', !state.isAdmin);
     const hint = document.getElementById('notAdminUidHint');
     hint.textContent = state.isAdmin ? 'Logged in as admin.' : 'Logged in as user.';
     hint.classList.remove('hidden');
@@ -978,8 +1083,39 @@ function subscribeToDayCounter() {
     });
 }
 const REQUIRED_HEADERS = ['name', 'profession', 'faction', 'kills', 'assists', 'deaths', 'damage', 'largest performed hit', 'damage taken', 'healing', 'largest heal', 'captures'];
-const MAX_PLAUSIBLE_DAMAGE = 7000000;
-const MAX_PLAUSIBLE_HEALING = 5000000;
+// Previously only damage/healing had any ceiling at all here — damageTaken, kills,
+// assists, largestHit and largestHeal had none, which is exactly how a damageTaken
+// reading several times higher than anything else on record made it all the way
+// into the live database with nothing ever flagging it. One shared table now
+// backs every plausibility check in the file (this upload gate, the live
+// review-table edit handler, and the initial OCR pass itself) so they can't drift
+// out of sync the way damage/healing vs. everything-else just did. These numbers
+// are a reasonable-sounding ceiling, not a confirmed real gameplay maximum for
+// this game — treat them as a first pass to tighten or loosen, not gospel.
+// Tightened from the original guessed ceilings (7,000,000 / 5,000,000 / 200,000)
+// based on the user's explicit stated real-game maximums: damageTaken "at most...
+// 1.5 million rarely", largestHit "at most... under 20,000". damage and healing
+// pulled in to match the same reasoning (damage/damageTaken are the same
+// unit/scale — what one side deals the other receives — and a real example row
+// the user shared showed ~1.7M damage as a strong-but-ordinary performance, so
+// healing shouldn't realistically run far higher than that either). Some
+// headroom kept above each stated number rather than using it as the exact
+// ceiling, so a genuinely exceptional real performance right at the edge isn't
+// wrongly excluded. Adjust freely if these still aren't right.
+const PLAUSIBILITY_LIMITS = {
+    damage: 2000000, damageTaken: 2000000,
+    healing: 2000000,
+    kills: 500, assists: 500, // user confirmed kills look accurate as-is
+    largestHit: 25000, largestHeal: 25000,
+};
+const PLAUSIBILITY_LABELS = { damage: 'damage', damageTaken: 'damage taken', healing: 'healing', kills: 'kills', assists: 'assists', largestHit: 'largest hit', largestHeal: 'largest heal' };
+// Returns every field on `stats` that exceeds its PLAUSIBILITY_LIMITS ceiling, or []
+// if none do. `stats` just needs matching keys — used both for a freshly-parsed row
+// (plain field names) and for a live single-field edit (see the review-table input
+// handler below).
+function implausibleFields(stats) {
+    return Object.keys(PLAUSIBILITY_LIMITS).filter(f => (stats[f] || 0) > PLAUSIBILITY_LIMITS[f]);
+}
 function validateAndParseReportHTML(text) {
     const doc_ = new DOMParser().parseFromString(text, 'text/html');
     const table = doc_.querySelector('table');
@@ -1009,14 +1145,25 @@ function validateAndParseReportHTML(text) {
             continue;
         const damage = num('damage');
         const healing = num('healing');
-        if (damage > MAX_PLAUSIBLE_DAMAGE) {
-            return { valid: false, error: `Implausible damage for ${name}: ${damage.toLocaleString()} exceeds the maximum expected (${MAX_PLAUSIBLE_DAMAGE.toLocaleString()}). Likely an OCR misread — double-check the source image.` };
+        const statsForCheck = { damage, healing, damageTaken: num('damage taken'), kills: num('kills'), assists: num('assists'), largestHit: num('largest performed hit'), largestHeal: num('largest heal') };
+        const badFields = implausibleFields(statsForCheck);
+        if (badFields.length) {
+            const f = badFields[0]; // report the first; re-running after fixing it will catch any others
+            return { valid: false, error: `Implausible ${PLAUSIBILITY_LABELS[f]} for ${name}: ${statsForCheck[f].toLocaleString()} exceeds the maximum expected (${PLAUSIBILITY_LIMITS[f].toLocaleString()}). Likely an OCR misread — double-check the source image.` };
         }
-        if (healing > MAX_PLAUSIBLE_HEALING) {
-            return { valid: false, error: `Implausible healing for ${name}: ${healing.toLocaleString()} exceeds the maximum expected (${MAX_PLAUSIBLE_HEALING.toLocaleString()}). Likely an OCR misread — double-check the source image.` };
+        // This is the real final gate every report goes through before submitReport() —
+        // an OCR-converted report that was hand-edited in the review table, a battle
+        // report HTML pasted/uploaded directly, anything — so "classes can never have a
+        // custom name" has to be enforced here too, not just in parseBattleReportFromGrid
+        // above (which only covers the fresh-OCR path, and can be bypassed by editing the
+        // Profession cell in the review table before it's uploaded).
+        const rawProfession = get('profession');
+        const profession = canonicalProfession(rawProfession);
+        if (!profession) {
+            return { valid: false, error: `Row for "${name}": "${rawProfession}" in the Profession column isn't one of the known classes (${KNOWN_PROFESSIONS.join(', ')}) and isn't a close enough misread of one to auto-correct safely.` };
         }
         players.push({
-            name, profession: get('profession') || 'Unknown', faction: get('faction') || 'Unknown',
+            name, profession, faction: get('faction') || 'Unknown',
             kills: num('kills'), assists: num('assists'), deaths: num('deaths'),
             damage, largestHit: num('largest performed hit'), damageTaken: num('damage taken'),
             healing, largestHeal: num('largest heal'), captures: num('captures')
@@ -1025,15 +1172,6 @@ function validateAndParseReportHTML(text) {
     if (players.length === 0)
         return { valid: false, error: 'Header row matched, but no player rows could be parsed.' };
     return { valid: true, players };
-}
-async function hashReportStats(players) {
-    const sorted = [...players].sort((a, b) => canonicalName(a.name).localeCompare(canonicalName(b.name)));
-    const canonical = sorted.map(p => [
-        canonicalName(p.name), p.damage, p.healing, p.assists, p.deaths
-    ].join('|')).join('\n');
-    const bytes = new TextEncoder().encode(canonical);
-    const digest = await crypto.subtle.digest('SHA-256', bytes);
-    return Array.from(new Uint8Array(digest)).map(b => b.toString(16).padStart(2, '0')).join('');
 }
 function statsKey(p) {
     // Every numeric stat, not just 4 of them -- the more fields two reports agree on
@@ -2344,12 +2482,47 @@ function weightedComposite(lookups, prof, s, weights) {
         weights.assists * clampZ(zscore(s.assists, assists.mean, assists.std)) -
         weights.deaths * clampZ(zscore(s.deaths, deaths.mean, deaths.std));
 }
+// A report counts toward Elo/prices/stats only if every player row in it is
+// well-formed — an unrecognized class (canonicalProfession returns null, i.e.
+// not even a close misread of one of the nine known classes) or any numeric
+// stat over the PLAUSIBILITY_LIMITS ceiling. This is a SEPARATE, later line of
+// defense from the upload-time rejection in validateAndParseReportHTML/
+// parseBattleReportFromGrid — those stop NEW bad data from ever being saved;
+// this stops OLD bad data (anything that got in before those checks existed,
+// or arrived any other way) from silently poisoning every calculation that
+// reads state.reports. A report excluded here is NOT deleted — it's just
+// skipped by computeMarketFromReports below, and listed in the admin "invalid
+// reports" panel (see state.invalidReports) for manual review/deletion.
+function invalidReasonsForReport(rep) {
+    const reasons = [];
+    (rep.players || []).forEach(p => {
+        if (!canonicalProfession(p.profession))
+            reasons.push(p.name + ': unrecognized class "' + p.profession + '"');
+        const bad = implausibleFields(p);
+        if (bad.length)
+            reasons.push(p.name + ': implausible ' + bad.map(f => PLAUSIBILITY_LABELS[f] + ' (' + (p[f] || 0).toLocaleString() + ')').join(', '));
+    });
+    return reasons;
+}
 function computeMarketFromReports(reportsList) {
     const ratings = {};
     const players = {};
-    const sortedReports = [...reportsList].sort((a, b) => a.day - b.day);
+    const invalidReports = [];
+    const sortedReports = [...reportsList].sort((a, b) => a.day - b.day).filter(rep => {
+        const reasons = invalidReasonsForReport(rep);
+        if (reasons.length) {
+            invalidReports.push({ day: rep.day, id: rep.id, filename: rep.filename, reasons });
+            return false;
+        }
+        return true;
+    });
     sortedReports.forEach(rep => {
-        const rows = rep.players.map(r => Object.assign({}, r, { name: canonicalName(r.name) }));
+        // Resolve both name and profession here, once, rather than in every downstream
+        // reader -- profession falls back to the raw stored value on the off chance an
+        // older report somehow still doesn't resolve, matching canonicalName()'s own
+        // non-destructive fallback above (never crashes computation over old data, just
+        // can't fully normalize display for it).
+        const rows = rep.players.map(r => Object.assign({}, r, { name: canonicalName(r.name), profession: canonicalProfession(r.profession) || r.profession }));
         rows.forEach(r => {
             if (!ratings[r.name])
                 ratings[r.name] = { elo: ELO_START, battles: 0, wins: 0, losses: 0, draws: 0, profession: r.profession };
@@ -2427,15 +2600,18 @@ function computeMarketFromReports(reportsList) {
             players[name].priceHistory.push({ day: rep.day, price: todaysPrices[name] });
         });
     });
-    return { players, ratings };
+    return { players, ratings, invalidReports };
 }
 function recomputeMarket() {
-    const { players, ratings } = computeMarketFromReports(state.reports);
+    const { players, ratings, invalidReports } = computeMarketFromReports(state.reports);
     state.players = players;
     state.elo = ratings;
-    const profSet = new Set();
-    Object.values(players).forEach(p => (p.history || []).forEach(h => profSet.add(normProf(h.profession))));
-    KNOWN_PROFESSIONS_SORTED = Array.from(profSet).sort();
+    state.invalidReports = invalidReports;
+    // Fixed order from the closed KNOWN_PROFESSIONS list now, rather than discovered
+    // from whatever happened to be in the data and alphabetized — every class gets a
+    // permanently stable color from the moment the app loads, not one that depends on
+    // data load order or which classes have shown up in reports loaded so far.
+    KNOWN_PROFESSIONS_SORTED = KNOWN_PROFESSIONS.map(p => normProf(p));
 }
 function currentPrice(symbol) {
     const p = state.players[symbol];
@@ -2597,7 +2773,7 @@ function computeSwapPremium(symbol, threshold, notional, daysToExpiry) {
     const premium = Math.max(0.5, notional * probAtLeastOnce * 1.15);
     return { perReportProb, probAtLeastOnce, premium: Math.round(premium * 100) / 100 };
 }
-const TEST_PROFESSIONS = ['Commando', 'Bounty Hunter', 'Officer', 'Smuggler', 'Medic', 'Jedi'];
+const TEST_PROFESSIONS = KNOWN_PROFESSIONS; // kept in lockstep with the enforced class list rather than its own separate subset
 const TEST_FACTIONS = ['Imperial', 'Rebel'];
 function randInt(min, max) { return Math.floor(Math.random() * (max - min + 1)) + min; }
 document.getElementById('dbgTestReport').addEventListener('click', async () => {
@@ -2711,8 +2887,20 @@ document.getElementById('dbgMigrateReports').addEventListener('click', async () 
     const snapshot = [...state.reports];
     const byHash = {};
     try {
+        // hashStatsOnly, not hashReportStats -- this was the actual bug behind
+        // "still seeing duplicate data in Elo Distribution." hashReportStats
+        // resolves names through canonicalName() first, so it can only match two
+        // reports whose names have ALREADY been aliased to agree; any report
+        // uploaded before a trailing-j (or any other) misread got aliased sails
+        // straight through undetected, even though it's a byte-for-byte duplicate
+        // of an existing report. hashStatsOnly (the same hash submitReport() uses
+        // as the live document ID to block a NEW duplicate upload in real time)
+        // ignores names entirely and checks all nine stat fields instead of four,
+        // so it catches a duplicate regardless of whether anyone has gotten
+        // around to aliasing that particular name-misread yet -- which is exactly
+        // the scenario a stale alias table left this tool blind to.
         for (const rep of snapshot) {
-            const hash = await hashReportStats(rep.players);
+            const hash = await hashStatsOnly(rep.players);
             (byHash[hash] = byHash[hash] || []).push({ hash, rep });
         }
     }
@@ -2966,6 +3154,13 @@ document.getElementById('dbgDiagnoseTradePerms').addEventListener('click', async
         { field: 'side', value: 'long' },
         { field: 'strike', value: 1 },
         { field: 'expiryDay', value: state.day },
+        // expiresAt (a real wall-clock timestamp, ms since epoch) is new as of the
+        // options-now-settle-on-a-real-24h-wait change — every open/write path writes
+        // it now, so if the live rule does strict field validation and hasn't been
+        // taught about it yet, EVERY option/write purchase will start failing, not
+        // just display wrong. Testing it here the same incremental way as the other
+        // fields catches that before it surprises anyone mid-trade.
+        { field: 'expiresAt', value: Date.now() },
         { field: 'premium', value: 0.5 },
         { field: 'settlePrice', value: 0 }
     ];
@@ -2974,7 +3169,7 @@ document.getElementById('dbgDiagnoseTradePerms').addEventListener('click', async
         ...extraFields.map(({ field, value }) => ({ label: 'Stock-shape + "' + field + '" field added', data: { ...base, type: 'stock', avgCost: 0, [field]: value } })),
         // strike is set far above the current price so premium (0.5, the rule's own floor) always
         // satisfies "premium >= price - strike" for a call, regardless of what the symbol is priced at.
-        { label: 'Full option-shape position (type=call, side, symbol, strike, expiryDay, qty, premium, boughtDay, status, settlePrice, dismissed, cashDelta, realizedDelta)', data: { type: 'call', side: 'long', symbol: realSymbol, strike: price + 1000, expiryDay: state.day, qty: 0, premium: 0.5, boughtDay: state.day, status: 'sold', settlePrice: 0, dismissed: true, cashDelta: 0, realizedDelta: 0 } }
+        { label: 'Full option-shape position (type=call, side, symbol, strike, expiryDay, expiresAt, qty, premium, boughtDay, status, settlePrice, dismissed, cashDelta, realizedDelta)', data: { type: 'call', side: 'long', symbol: realSymbol, strike: price + 1000, expiryDay: state.day, expiresAt: Date.now(), qty: 0, premium: 0.5, boughtDay: state.day, status: 'sold', settlePrice: 0, dismissed: true, cashDelta: 0, realizedDelta: 0 } }
     ];
     const results = [];
     for (const v of variants) {
@@ -3162,6 +3357,79 @@ document.getElementById('nameGroupsList').addEventListener('click', (e) => {
 document.getElementById('dbgBulkImportNameGroups').addEventListener('click', bulkImportNameGroups);
 document.getElementById('dbgScanBadNames').addEventListener('click', scanReportsForKnownBadNames);
 document.getElementById('playerDayLookupSelect').addEventListener('change', renderPlayerDayLookup);
+// Bulk day-range delete -- for cleaning up a batch that landed under the wrong
+// days (e.g. an export uploaded with a bad date). Two-step by design, same as
+// every other destructive admin tool in this file: Preview computes and shows
+// exactly which cached reports match before anything is touched; the delete
+// button only appears after a preview, and asking again (new numbers, or even
+// the same ones) always requires a fresh Preview click first -- there's no way
+// to fire the delete button without having just seen the real list it's about
+// to act on.
+let pendingDeleteRange = null;
+document.getElementById('dbgShowInvalidReports').addEventListener('click', () => {
+    const out = document.getElementById('invalidReportsResults');
+    const list = state.invalidReports || [];
+    if (!list.length) {
+        out.textContent = 'None found — every cached report has a recognized class and plausible stats for every player.';
+        return;
+    }
+    out.innerHTML = '<div style="color:var(--amber); margin-bottom:8px;">' + list.length + ' report(s) currently excluded from Elo/prices/stats:</div>'
+        + list.slice().sort((a, b) => a.day - b.day).map(r => '<div style="padding:4px 0; border-bottom:1px solid var(--line);">'
+            + '<span class="day-link" data-day="' + r.day + '">Day ' + r.day + '</span>'
+            + (r.filename ? ' — ' + escapeHtml(r.filename) : '')
+            + '<br><span style="color:var(--text-dim);">' + r.reasons.map(escapeHtml).join('<br>') + '</span>'
+            + '</div>').join('');
+});
+document.getElementById('invalidReportsResults').addEventListener('click', e => {
+    const dayLink = e.target.closest('.day-link');
+    if (dayLink)
+        openDayDetail(Number(dayLink.dataset.day));
+});
+document.getElementById('dbgPreviewDeleteRange').addEventListener('click', () => {
+    const from = Number(document.getElementById('deleteRangeFrom').value);
+    const to = Number(document.getElementById('deleteRangeTo').value);
+    const out = document.getElementById('deleteRangeResults');
+    pendingDeleteRange = null;
+    if (!from || !to || from > to) {
+        out.textContent = 'Enter a valid "From day" and "To day" (From must be ≤ To).';
+        return;
+    }
+    const matches = state.reports.filter(r => r.day >= from && r.day <= to).sort((a, b) => a.day - b.day);
+    if (!matches.length) {
+        out.textContent = 'No cached reports found with day between ' + from + ' and ' + to + '.';
+        return;
+    }
+    pendingDeleteRange = { from, to, reports: matches };
+    out.innerHTML = '<div style="color:var(--amber); margin-bottom:8px;">' + matches.length + ' report(s) found, day ' + from + '–' + to + ':</div>'
+        + matches.map(r => escapeHtml('Day ' + r.day + ' — ' + (r.players ? r.players.length : 0) + ' players' + (r.filename ? ' — ' + r.filename : ''))).join('<br>')
+        + '<div style="margin-top:10px;"><button type="button" class="debug-btn" id="dbgConfirmDeleteRange" style="border-color:var(--red); color:var(--red);">Permanently delete these ' + matches.length + ' reports</button></div>';
+    document.getElementById('dbgConfirmDeleteRange').addEventListener('click', executeDeleteRange);
+});
+async function executeDeleteRange() {
+    if (!pendingDeleteRange || !pendingDeleteRange.reports.length)
+        return;
+    const { reports, from, to } = pendingDeleteRange;
+    if (!confirm('Permanently delete ' + reports.length + ' report(s) from day ' + from + ' to ' + to + '? This cannot be undone.'))
+        return;
+    const out = document.getElementById('deleteRangeResults');
+    out.textContent = 'Deleting ' + reports.length + ' report(s)…';
+    try {
+        // Firestore batches cap at 500 writes -- chunked defensively even though a
+        // realistic day range is very unlikely to ever approach that.
+        for (let i = 0; i < reports.length; i += 400) {
+            const chunk = reports.slice(i, i + 400);
+            const batch = writeBatch(db);
+            chunk.forEach(r => batch.delete(doc(db, 'reports', r.id)));
+            await batch.commit();
+        }
+        pendingDeleteRange = null;
+        out.textContent = 'Deleted ' + reports.length + ' report(s) from day ' + from + ' to ' + to + '. Reloading to recompute Elo/prices/history from what remains…';
+        setTimeout(() => location.reload(), 1200);
+    }
+    catch (err) {
+        out.textContent = 'Failed partway through: ' + err.message + '. Some reports in this range may already be gone — click Preview again to see the current state before retrying.';
+    }
+}
 async function deleteReport(reportId) {
     if (!confirm('Delete this report from the shared market? Prices for everyone will recompute without it.'))
         return;
@@ -3252,6 +3520,11 @@ async function buyContract() {
         }
         const positionData = {
             type: 'swap', side: 'long', symbol, threshold, notional, expiryDay: state.day + expiryDays,
+            // expiresAt is the REAL trigger now (see checkAndSettlePositions) -- a genuine
+            // wall-clock wait, same as a real option, rather than "however many reports
+            // happen to land before this one." expiryDay is kept alongside it purely for
+            // display/backward-compat with positions bought before this change.
+            expiresAt: Date.now() + expiryDays * MS_PER_DAY,
             qty, premium, boughtDay: state.day, status: 'open', settlePrice: null, dismissed: false
         };
         await commitTrade(positionData, totalCost, 'Bought ' + qty + 'x ' + symbol + ' elimination swap (trigger: deaths >= ' + threshold + ')', msgEl);
@@ -3275,6 +3548,7 @@ async function buyContract() {
         if (state.tradeSide === 'write') {
             const positionData = {
                 type: state.tradeType, side: 'short', symbol, strike, expiryDay: state.day + expiryDays,
+                expiresAt: Date.now() + expiryDays * MS_PER_DAY,
                 qty, premium, boughtDay: state.day, status: 'open', settlePrice: null, dismissed: false
             };
             await commitWrite(positionData, totalAmount, 'Wrote ' + qty + 'x ' + symbol + ' $' + strike.toFixed(2) + ' ' + typeLabel + ' — received', msgEl);
@@ -3287,6 +3561,7 @@ async function buyContract() {
             }
             const positionData = {
                 type: state.tradeType, side: 'long', symbol, strike, expiryDay: state.day + expiryDays,
+                expiresAt: Date.now() + expiryDays * MS_PER_DAY,
                 qty, premium, boughtDay: state.day, status: 'open', settlePrice: null, dismissed: false
             };
             await commitTrade(positionData, totalAmount, 'Bought ' + qty + 'x ' + symbol + ' $' + strike.toFixed(2) + ' ' + typeLabel, msgEl);
@@ -3302,7 +3577,7 @@ async function commitTrade(positionData, totalCost, successMsg, msgEl) {
         batch.update(userRef, { cash: state.cash - totalCost, realized: state.realized, lastTradeId: posRef.id });
         await batch.commit();
         msgEl.className = 'msg ok';
-        msgEl.textContent = successMsg + ', expiring day ' + positionData.expiryDay + '.';
+        msgEl.textContent = successMsg + ', expiring ' + new Date(positionData.expiresAt).toLocaleString() + '.';
     }
     catch (err) {
         msgEl.className = 'msg err';
@@ -3318,7 +3593,7 @@ async function commitWrite(positionData, premiumReceived, successMsg, msgEl) {
         batch.update(userRef, { cash: state.cash + premiumReceived, realized: state.realized, lastTradeId: posRef.id });
         await batch.commit();
         msgEl.className = 'msg ok';
-        msgEl.textContent = successMsg + ' ' + fmtMoney(premiumReceived) + ', expiring day ' + positionData.expiryDay + '. You now owe the payoff if it finishes in the money.';
+        msgEl.textContent = successMsg + ' ' + fmtMoney(premiumReceived) + ', expiring ' + new Date(positionData.expiresAt).toLocaleString() + '. You now owe the payoff if it finishes in the money.';
     }
     catch (err) {
         msgEl.className = 'msg err';
@@ -3326,8 +3601,17 @@ async function commitWrite(positionData, premiumReceived, successMsg, msgEl) {
     }
 }
 document.getElementById('buyBtn').addEventListener('click', buyContract);
-async function settleOptionPosition(pos, settleDay) {
-    const settlePrice = priceAtOrBefore(pos.symbol, settleDay) ?? currentPrice(pos.symbol) ?? 0;
+async function settleOptionPosition(pos) {
+    // A real wall-clock expiry settles at whatever the LATEST price is once that
+    // real time has actually passed -- there's no specific "report day" a calendar
+    // deadline lines up with, so currentPrice() (not priceAtOrBefore(), which looks
+    // up a specific report-day's price) is the correct lookup here. Positions bought
+    // before this change (no expiresAt) keep their old report-day-based settlement
+    // for consistency with how they were priced and displayed the whole time they
+    // were open.
+    const settlePrice = pos.expiresAt
+        ? (currentPrice(pos.symbol) ?? 0)
+        : (priceAtOrBefore(pos.symbol, pos.expiryDay) ?? currentPrice(pos.symbol) ?? 0);
     const intrinsic = pos.type === 'put'
         ? Math.max(0, pos.strike - settlePrice) * pos.qty
         : Math.max(0, settlePrice - pos.strike) * pos.qty;
@@ -3364,13 +3648,25 @@ async function applyWriterSettlement(pos, settlePrice, amountOwed) {
     batch.update(userRef, { cash: state.cash - amountOwed, realized: state.realized + realizedDelta, lastTradeId: pos.id });
     await batch.commit();
 }
+// A position expires on a genuine wall-clock wait now (expiresAt, set at purchase
+// — see buyContract()), not "however many more reports happen to land," which is
+// what it used to mean: expiryDay was a report-count, so a burst of reports
+// uploaded back-to-back could expire a "1 day" option within minutes of real time,
+// while a quiet stretch with no uploads could leave it open for real days past
+// when it should have settled. Positions bought before this change have no
+// expiresAt, so they fall back to the original report-day comparison -- same
+// settlement behavior they had the whole time they were open, not silently
+// changed out from under them.
+function isPastExpiry(pos) {
+    return pos.expiresAt ? (Date.now() >= pos.expiresAt) : (state.day >= pos.expiryDay);
+}
 async function checkAndSettlePositions() {
     for (const pos of state.positions) {
         if (pos.status !== 'open' || pos.type === 'stock')
             continue;
         if (pos.type === 'swap') {
             const relevantReports = state.reports
-                .filter(r => r.day > pos.boughtDay && r.day <= pos.expiryDay)
+                .filter(r => r.day > pos.boughtDay && r.day <= state.day)
                 .sort((a, b) => a.day - b.day);
             let triggered = false;
             for (const rep of relevantReports) {
@@ -3383,13 +3679,13 @@ async function checkAndSettlePositions() {
             if (triggered) {
                 await settleSwapPosition(pos, true);
             }
-            else if (state.day >= pos.expiryDay) {
+            else if (isPastExpiry(pos)) {
                 await settleSwapPosition(pos, false);
             }
         }
         else {
-            if (state.day >= pos.expiryDay) {
-                await settleOptionPosition(pos, pos.expiryDay);
+            if (isPastExpiry(pos)) {
+                await settleOptionPosition(pos);
             }
         }
     }
@@ -3404,7 +3700,13 @@ async function closePositionEarly(posId) {
     const isShort = pos.side === 'short';
     if (!confirm(isShort ? 'Buy this contract back now at its current fair value to close out the obligation?' : 'Sell this position now at its current fair value?'))
         return;
-    const remaining = Math.max(1, pos.expiryDay - state.day);
+    // Real fractional days left on the actual wall-clock expiry when there is one
+    // (computeOptionPremium/computeSwapPremium already floor this at 1 internally,
+    // same as the report-count version always did) -- legacy positions bought
+    // before this change fall back to counting reports, same as before.
+    const remaining = pos.expiresAt
+        ? (pos.expiresAt - Date.now()) / MS_PER_DAY
+        : Math.max(1, pos.expiryDay - state.day);
     let value;
     if (pos.type === 'swap') {
         value = computeSwapPremium(pos.symbol, pos.threshold, pos.notional, remaining).premium * pos.qty;
@@ -3861,12 +4163,22 @@ function renderPositionCard(pos) {
     const isShort = pos.side === 'short';
     const kindLabel = (isShort ? 'Written ' : '') + (pos.type === 'swap' ? 'Elimination Swap' : (pos.type === 'put' ? 'Put' : 'Call'));
     if (pos.status === 'open') {
-        const daysLeft = pos.expiryDay - state.day;
+        // Real wall-clock countdown for anything bought after this change; legacy
+        // positions (no expiresAt) still show the old "N reports away" framing they
+        // were bought under.
+        const pastExpiry = isPastExpiry(pos);
+        const timeLeftLabel = pastExpiry
+            ? 'settles next tick'
+            : (pos.expiresAt
+                ? formatTimeRemaining(pos.expiresAt) + ' left'
+                : (pos.expiryDay - state.day) + ' day' + ((pos.expiryDay - state.day) !== 1 ? 's' : '') + ' left');
+        const remaining = pos.expiresAt
+            ? (pos.expiresAt - Date.now()) / MS_PER_DAY
+            : Math.max(1, pos.expiryDay - state.day);
         let mainLine, markValue, closeValue;
         if (pos.type === 'swap') {
             mainLine = 'Trigger: deaths >= ' + pos.threshold + ' · Notional ' + fmtMoney(pos.notional);
             markValue = 0;
-            const remaining = Math.max(1, pos.expiryDay - state.day);
             closeValue = computeSwapPremium(pos.symbol, pos.threshold, pos.notional, remaining).premium * pos.qty;
         }
         else {
@@ -3878,7 +4190,7 @@ function renderPositionCard(pos) {
         const closeLabel = isShort ? 'Buy back for' : 'Close now for';
         const closeBtnLabel = isShort ? 'Buy back' : 'Sell';
         return '<div class="pos-card">'
-            + '<div class="top"><span class="kind">' + kindLabel + '</span><span class="sym">' + escapeHtml(pos.symbol) + '</span><span class="tag open">OPEN · ' + (daysLeft <= 0 ? 'settles next tick' : daysLeft + ' day' + (daysLeft !== 1 ? 's' : '') + ' left') + '</span></div>'
+            + '<div class="top"><span class="kind">' + kindLabel + '</span><span class="sym">' + escapeHtml(pos.symbol) + '</span><span class="tag open">OPEN · ' + timeLeftLabel + '</span></div>'
             + '<div class="detail"><span>' + mainLine + '</span></div>'
             + '<div class="detail"><span>Contracts</span><b>' + pos.qty + '</b></div>'
             + '<div class="detail"><span>' + premiumLabel + '</span><b>' + fmtMoney(pos.premium * pos.qty) + '</b></div>'
@@ -3902,7 +4214,11 @@ function renderPositionCard(pos) {
 function renderHistory() {
     const settled = state.positions.filter(p => p.type !== 'stock' && p.status !== 'open');
     const filtered = settled.filter(p => state.historyFilter === 'all' ? true : (state.historyFilter === 'won' ? p.status === 'won' : p.status === 'lost'));
-    const sorted = [...filtered].sort((a, b) => b.expiryDay - a.expiryDay);
+    // boughtDay (always a report-day int, regardless of position type or when it was
+    // bought) rather than expiryDay -- expiryDay is only directly comparable between
+    // two legacy positions; mixed with a wall-clock expiresAt-based one it wouldn't
+    // sort meaningfully.
+    const sorted = [...filtered].sort((a, b) => b.boughtDay - a.boughtDay);
     const wins = settled.filter(p => p.status === 'won').length, losses = settled.filter(p => p.status === 'lost').length;
     const totalRealized = settled.reduce((sum, p) => sum + (p.side === 'short' ? (p.premium * p.qty - p.payoff) : (p.payoff - p.premium * p.qty)), 0);
     const winRate = settled.length ? (wins / settled.length * 100) : 0;
@@ -3920,9 +4236,12 @@ function renderHistory() {
         const netPl = isShort ? (pos.premium * pos.qty - pos.payoff) : (pos.payoff - pos.premium * pos.qty);
         const kindLabel = (isShort ? 'Short ' : '') + (pos.type === 'swap' ? 'Swap' : (pos.type === 'put' ? 'Put' : 'Call'));
         const strikeCol = pos.type === 'swap' ? ('deaths>=' + pos.threshold) : fmtMoney(pos.strike);
+        // expiresAt is a real timestamp (local date/time reads better than a raw
+        // "Day N" for it); legacy positions without one keep the old "Day N" label.
+        const expiryCol = pos.expiresAt ? new Date(pos.expiresAt).toLocaleString() : ('Day ' + pos.expiryDay);
         return '<tr>'
             + '<td>' + kindLabel + '</td><td class="sym">' + escapeHtml(pos.symbol) + '</td><td>' + strikeCol + '</td>'
-            + '<td>Day ' + pos.boughtDay + '</td><td>Day ' + pos.expiryDay + '</td><td>' + fmtMoney(pos.settlePrice || 0) + '</td>'
+            + '<td>Day ' + pos.boughtDay + '</td><td>' + expiryCol + '</td><td>' + fmtMoney(pos.settlePrice || 0) + '</td>'
             + '<td>' + pos.qty + '</td><td>' + fmtMoney(pos.premium * pos.qty) + '</td><td>' + fmtMoney(pos.payoff) + '</td>'
             + '<td class="' + (netPl >= 0 ? 'win-text' : 'loss-text') + '">' + (netPl >= 0 ? '+' : '') + fmtMoney(netPl) + '</td>'
             + '<td class="' + (pos.status === 'won' ? 'win-text' : 'loss-text') + '">' + (pos.status === 'won' ? 'WON' : 'LOST') + (pos.closedEarly ? ' (early)' : '') + '</td>'
@@ -3980,6 +4299,109 @@ function getEloLeaderboardEntries() {
     eligible.sort((a, b) => b.elo - a.elo);
     return { totalCount: allEntries.length, eligible, shown: eligible.slice(0, ELO_MAX_PLAYERS_SHOWN) };
 }
+const TOP_STAT_CATEGORIES = [
+    { key: 'largestHit', label: 'Largest Hit' },
+    { key: 'largestHeal', label: 'Largest Heal' },
+    { key: 'kills', label: 'Highest Kills' },
+    { key: 'assists', label: 'Highest Assists' },
+    { key: 'damage', label: 'Highest Damage' },
+    { key: 'damageTaken', label: 'Highest Damage Taken' },
+    { key: 'healing', label: 'Highest Healing' },
+];
+// All-time single-battle records across EVERY player who's ever appeared in a
+// report, not just the top-100/>5-battles Elo leaderboard below -- a
+// record-setting performance has nothing to do with someone's overall rating
+// or how many battles they've played, so this deliberately scans full history
+// rather than reusing getEloLeaderboardEntries()'s capped list.
+function computeTopStats() {
+    const records = {};
+    Object.values(state.players).forEach(p => {
+        (p.history || []).forEach(h => {
+            TOP_STAT_CATEGORIES.forEach(c => {
+                const val = h[c.key] || 0;
+                if (!records[c.key] || val > records[c.key].value)
+                    records[c.key] = { value: val, name: p.name, day: h.day, profession: h.profession };
+            });
+        });
+    });
+    return records;
+}
+function renderTopStats() {
+    const el = document.getElementById('eloTopStats');
+    if (!el)
+        return;
+    const records = computeTopStats();
+    el.innerHTML = TOP_STAT_CATEGORIES.map(c => {
+        const r = records[c.key];
+        if (!r)
+            return '';
+        const dayRef = state.isAdmin ? '<span class="day-link" data-day="' + r.day + '">Day ' + r.day + '</span>' : 'Day ' + r.day;
+        return '<div class="stat"><div class="label">' + escapeHtml(c.label.toUpperCase()) + '</div>'
+            + '<div class="value">' + Math.round(r.value).toLocaleString() + '</div>'
+            + '<div style="font-size:11px; color:var(--text-dim);">' + escapeHtml(r.name) + ' (' + escapeHtml(r.profession || 'Unknown') + ') · ' + dayRef + '</div></div>';
+    }).join('');
+}
+// Admin-only: given a day number, find the actual stored report and show every
+// player's full row from it -- the concrete tool for "is this really what the
+// export said, or is something upstream of the aggregate wrong." Reuses
+// implausibleFields() (the same plausibility table the upload gate enforces) to
+// highlight any cell that's over the ceiling directly in this view.
+function openDayDetail(day) {
+    if (!state.isAdmin)
+        return;
+    const modal = document.getElementById('dayDetailModal');
+    const titleEl = document.getElementById('dayDetailTitle');
+    const bodyEl = document.getElementById('dayDetailBody');
+    const rep = state.reports.find(r => r.day === day);
+    if (!rep) {
+        titleEl.textContent = 'Day ' + day;
+        bodyEl.innerHTML = '<div class="empty-state">No cached report found for day ' + day + ' in this session. It may not have synced into state.reports yet — try refreshing the page, or check the "reports" collection directly in the Firebase console for day == ' + day + '.</div>';
+        modal.classList.remove('hidden');
+        return;
+    }
+    // Highest damage first -- surfaces an outlier row immediately rather than
+    // making the admin hunt for it in whatever order the export happened to list
+    // players in.
+    const players = [...rep.players].sort((a, b) => (b.damage || 0) - (a.damage || 0));
+    titleEl.textContent = 'Day ' + day + ' — ' + players.length + ' player' + (players.length === 1 ? '' : 's') + (rep.filename ? ' · ' + rep.filename : '');
+    const cell = (p, field, display) => {
+        const flagged = implausibleFields(p).includes(field);
+        return '<td' + (flagged ? ' class="stat-flagged" title="Exceeds the plausibility ceiling for this field"' : '') + '>' + display + '</td>';
+    };
+    const reportInvalid = invalidReasonsForReport(rep);
+    bodyEl.innerHTML = (reportInvalid.length
+        ? '<div style="color:var(--red); margin-bottom:10px; font-weight:700;">This report is currently EXCLUDED from Elo/prices/stats — see reasons below the table.</div>'
+        : '')
+        + '<div style="overflow-x:auto;"><table class="history"><thead><tr>'
+        + '<th><span>Name</span></th><th><span>Class</span></th><th><span>Faction</span></th>'
+        + '<th><span>Kills</span></th><th><span>Assists</span></th><th><span>Deaths</span></th>'
+        + '<th><span>Damage</span></th><th><span>Largest Hit</span></th><th><span>Damage Taken</span></th>'
+        + '<th><span>Healing</span></th><th><span>Largest Heal</span></th><th><span>Captures</span></th>'
+        + '</tr></thead><tbody>'
+        + players.map(p => '<tr>'
+            + '<td class="sym">' + escapeHtml(p.name) + '</td>'
+            + '<td' + (canonicalProfession(p.profession) ? '' : ' class="stat-flagged" title="Not one of the nine known classes"') + '><span class="cls-pill" style="color:' + professionColor(p.profession) + '">' + escapeHtml(p.profession || 'Unknown') + '</span></td>'
+            + '<td>' + escapeHtml(p.faction || 'Unknown') + '</td>'
+            + '<td>' + (p.kills || 0) + '</td>'
+            + '<td>' + (p.assists || 0) + '</td>'
+            + '<td>' + (p.deaths || 0) + '</td>'
+            + cell(p, 'damage', (p.damage || 0).toLocaleString())
+            + cell(p, 'largestHit', (p.largestHit || 0).toLocaleString())
+            + cell(p, 'damageTaken', (p.damageTaken || 0).toLocaleString())
+            + cell(p, 'healing', (p.healing || 0).toLocaleString())
+            + cell(p, 'largestHeal', (p.largestHeal || 0).toLocaleString())
+            + '<td>' + (p.captures || 0) + '</td>'
+            + '</tr>').join('')
+        + '</tbody></table></div>'
+        + '<div style="margin-top:10px; font-size:11px; color:var(--text-dim);">Red cells exceed the plausibility ceiling, or (Class column) aren\'t one of the nine known classes — a strong signal, not absolute proof, that the cell is an OCR misread rather than a genuine value.</div>'
+        + (reportInvalid.length
+            ? '<div style="margin-top:10px; font-size:12px; color:var(--red);">Excluded because:<br>' + reportInvalid.map(escapeHtml).join('<br>') + '</div>'
+            : '');
+    modal.classList.remove('hidden');
+}
+function closeDayDetail() {
+    document.getElementById('dayDetailModal').classList.add('hidden');
+}
 function renderEloTab() {
     const summaryEl = document.getElementById('eloSummary');
     const bodyEl = document.getElementById('eloBody');
@@ -4007,6 +4429,7 @@ function renderEloTab() {
             eloChart.destroy();
             eloChart = null;
         }
+        renderTopStats(); // scans full history regardless of the >5-battles leaderboard cutoff, so this can still have data even when the table above doesn't
         return;
     }
     const avg = entries.reduce((s, e) => s + e.elo, 0) / entries.length;
@@ -4019,6 +4442,7 @@ function renderEloTab() {
             + (hiddenForBattles > 0 ? '<div class="stat"><div class="label">NOT SHOWN</div><div class="value" style="font-size:12px;">' + hiddenForBattles + ' with ' + ELO_MIN_BATTLES_SHOWN + ' or fewer battles</div></div>' : '');
     bodyEl.innerHTML = buildEloBodyHtml(entries);
     renderEloChart(entries);
+    renderTopStats();
 }
 let expandedEloPlayer = null;
 function buildEloBodyHtml(entries) {
@@ -4089,7 +4513,11 @@ function classesForPlayer(name) {
     const groups = {};
     let firstDay = Infinity, lastDay = -Infinity;
     p.history.forEach(h => {
-        const raw = h.profession || 'Unknown';
+        // Resolve through canonicalProfession() in case this row predates the class
+        // whitelist being enforced at upload time — falls back to the raw value so a
+        // genuinely unresolvable old entry still displays as whatever it actually says
+        // rather than silently vanishing.
+        const raw = canonicalProfession(h.profession) || h.profession || 'Unknown';
         const key = normProf(raw);
         if (!groups[key])
             groups[key] = { count: 0, labelCounts: {} };
@@ -4145,7 +4573,7 @@ function renderBattleLogHtml(name) {
         + totals.kills + 'K / ' + totals.assists + 'A / ' + totals.deaths + 'D</div>'
         + '<table class="history"><thead><tr><th>Day</th><th>Class</th><th>Result</th><th>Damage</th><th>Healing</th><th>Kills</th><th>Assists</th><th>Deaths</th></tr></thead><tbody>'
         + rows.map(r => '<tr>'
-            + '<td>Day ' + r.day + '</td>'
+            + (state.isAdmin ? '<td><span class="day-link" data-day="' + r.day + '">Day ' + r.day + '</span></td>' : '<td>Day ' + r.day + '</td>')
             + '<td><span class="cls-pill" style="color:' + professionColor(r.profession) + '">' + escapeHtml(r.profession || 'Unknown') + '</span></td>'
             + '<td>' + resultCell(r) + '</td>'
             + '<td>' + fmtNum(r.damage) + '</td>'
@@ -4831,6 +5259,17 @@ class OcrRequiredCellError extends Error {
         this.name = 'OcrRequiredCellError';
     }
 }
+// Thrown when the Profession cell DID read something, but it isn't one of the
+// nine known classes and isn't a close enough misread of one to auto-correct
+// safely. Deliberately a hard failure, not a fallback to the raw text — there
+// is no such thing as a legitimately custom class, so storing whatever was
+// read instead of refusing would be exactly the bug this exists to prevent.
+class UnknownProfessionError extends Error {
+    constructor(rowNumber, rawValue) {
+        super(`Row ${rowNumber}: read "${rawValue}" in the Profession column, which isn't one of the known classes (${KNOWN_PROFESSIONS.join(', ')}) and isn't a close enough misread of one to auto-correct safely. Refusing to store a custom class name — retry with a sharper screenshot, or check whether this row belongs in the table at all.`);
+        this.name = 'UnknownProfessionError';
+    }
+}
 const KNOWN_HEADER_KEYS = Object.keys(HEADER_FIELD_MAP);
 function matchHeaderField(rawLabel) {
     const normalized = normalizeHeaderLabel(rawLabel);
@@ -4943,12 +5382,18 @@ async function parseBattleReportFromGrid(canvas, workerPool, onProgress) {
             throw new OcrRequiredCellError(r, 'Profession');
         if (!rowVals.faction)
             throw new OcrRequiredCellError(r, 'Faction');
+        // "Classes can never have a custom name" — resolve to one of the nine known
+        // classes (snapping a close misread) or refuse the row outright. Stores the
+        // CANONICAL spelling below, not the raw OCR text, so a corrected class never
+        // depends on canonicalProfession() being re-applied at every future read site.
+        const profession = canonicalProfession(rowVals.profession);
+        if (!profession)
+            throw new UnknownProfessionError(r, rowVals.profession);
         const rawName = rowVals.name;
         const autoFixedFrom = autoFixInsertionMisread(rawName, nameCounts);
         const name = autoFixedFrom || rawName;
         const nameSuggestion = autoFixedFrom ? null : closestByLevenshtein(name, knownNames);
-        players.push({
-            name, profession: rowVals.profession, faction: rowVals.faction,
+        const numericStats = {
             kills: cleanOcrNumber(rowVals.kills),
             assists: cleanOcrNumber(rowVals.assists),
             deaths: cleanOcrNumber(rowVals.deaths),
@@ -4958,8 +5403,17 @@ async function parseBattleReportFromGrid(canvas, workerPool, onProgress) {
             healing: cleanOcrNumber(rowVals.healing),
             largestHeal: cleanOcrNumber(rowVals.largestHeal),
             captures: cleanOcrNumber(rowVals.captures), // 0 for report types with no captures column
+        };
+        // Previously nothing flagged an implausible value fresh out of OCR — the red
+        // highlight in the review table only ever appeared AFTER someone happened to
+        // manually re-type that exact cell, so a bad reading that nobody touched sailed
+        // through looking completely normal. Flag it here too, using the same shared
+        // table the upload gate and live-edit handler both check against.
+        players.push({
+            name, profession, faction: rowVals.faction,
+            ...numericStats,
             extra,
-            _ocr: { nameSuggestion, autoFixedFrom } // nameSuggestion is informational only — every row here already passed every hard check; autoFixedFrom means the name field above was already rewritten
+            _ocr: { nameSuggestion, autoFixedFrom, implausible: implausibleFields(numericStats) }
         });
     }
     if (!players.length)
@@ -5049,11 +5503,10 @@ document.getElementById('ocrReviewTable').addEventListener('input', (e) => {
         player[field] = target.value;
         const ocr = player._ocr || (player._ocr = { confidence: {}, missing: [], implausible: [], nameSuggestion: null });
         ocr.missing = (ocr.missing || []).filter(f => f !== field);
-        if (field === 'damage' || field === 'healing') {
+        if (field in PLAUSIBILITY_LIMITS) {
             const n = cleanOcrNumber(target.value);
-            const limit = field === 'damage' ? MAX_PLAUSIBLE_DAMAGE : MAX_PLAUSIBLE_HEALING;
             ocr.implausible = (ocr.implausible || []).filter(f => f !== field);
-            if (n > limit)
+            if ((n || 0) > PLAUSIBILITY_LIMITS[field])
                 ocr.implausible.push(field);
         }
         if (field === 'name') {
@@ -5256,7 +5709,19 @@ document.getElementById('eloBody').addEventListener('click', e => {
     const link = e.target.closest('.player-link');
     if (link)
         toggleEloPlayer(link.dataset.player);
+    const dayLink = e.target.closest('.day-link');
+    if (dayLink)
+        openDayDetail(Number(dayLink.dataset.day));
 });
+document.getElementById('eloTopStats').addEventListener('click', e => {
+    const dayLink = e.target.closest('.day-link');
+    if (dayLink)
+        openDayDetail(Number(dayLink.dataset.day));
+});
+document.getElementById('dayDetailClose').addEventListener('click', closeDayDetail);
+document.getElementById('dayDetailBackdrop').addEventListener('click', closeDayDetail);
+document.addEventListener('keydown', e => { if (e.key === 'Escape')
+    closeDayDetail(); });
 </script>
 </body>
 </html>
