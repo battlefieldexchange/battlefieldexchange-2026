@@ -484,7 +484,7 @@
           </div>
           <div id="deleteRangeResults" style="margin-top:10px; font-size:12px; color:var(--text-dim); white-space:pre-line; max-height:300px; overflow-y:auto;"></div>
 
-          <div class="admin-note" style="margin-top:16px;">Reports with an unrecognized class or an implausible stat value are automatically excluded from Elo/prices/stats everywhere — this just lists which ones, and why, so you can review them (click a day to open the full report) and delete the bad ones with the tool above once you've confirmed they're really bad. Refreshes from the current session's cached reports — re-open this panel after reloading if you've uploaded or deleted anything since.</div>
+          <div class="admin-note" style="margin-top:16px;">A player row with an unrecognized class or an implausible stat value is automatically dropped from Elo/prices/stats — the rest of that report's players still count normally. A report only disappears entirely if EVERY row in it was flagged. This lists what's been dropped and why, so you can review (click a day to open the full report) and delete a report with the tool above if it's genuinely bad throughout, rather than just having one bad row. Refreshes from the current session's cached reports — re-open this panel after reloading if you've uploaded or deleted anything since.</div>
           <button class="debug-btn" id="dbgShowInvalidReports">Show invalid / excluded reports</button>
           <div id="invalidReportsResults" style="margin-top:10px; font-size:12px; color:var(--text-dim); white-space:pre-line; max-height:400px; overflow-y:auto;"></div>
         </div>
@@ -2508,21 +2508,40 @@ function computeMarketFromReports(reportsList) {
     const ratings = {};
     const players = {};
     const invalidReports = [];
-    const sortedReports = [...reportsList].sort((a, b) => a.day - b.day).filter(rep => {
-        const reasons = invalidReasonsForReport(rep);
-        if (reasons.length) {
-            invalidReports.push({ day: rep.day, id: rep.id, filename: rep.filename, reasons });
-            return false;
-        }
-        return true;
-    });
+    const sortedReports = [...reportsList].sort((a, b) => a.day - b.day);
     sortedReports.forEach(rep => {
+        // Drop just the specific bad player ROWS from this battle rather than the
+        // whole battle -- excluding every other, legitimate player in a report just
+        // because ONE row had a bad reading was far too aggressive. A normal, low
+        // per-row OCR error rate spread across many different reports (one bad row
+        // here, a different one there) was enough to exclude most of the app's data
+        // entirely, since every report touched by even a single bad row lost ALL its
+        // other players too -- that's what actually caused Elo Distribution to go
+        // empty. The rest of a report with one bad row still counts normally now.
+        const rowReasons = [];
+        const validPlayers = rep.players.filter(p => {
+            if (!canonicalProfession(p.profession)) {
+                rowReasons.push(p.name + ': unrecognized class "' + p.profession + '"');
+                return false;
+            }
+            const bad = implausibleFields(p);
+            if (bad.length) {
+                rowReasons.push(p.name + ': implausible ' + bad.map(f => PLAUSIBILITY_LABELS[f] + ' (' + (p[f] || 0).toLocaleString() + ')').join(', '));
+                return false;
+            }
+            return true;
+        });
+        if (rowReasons.length) {
+            invalidReports.push({ day: rep.day, id: rep.id, filename: rep.filename, reasons: rowReasons, droppedCount: rep.players.length - validPlayers.length, totalCount: rep.players.length });
+        }
+        if (!validPlayers.length)
+            return; // every row in this report was bad -- nothing usable left at all
         // Resolve both name and profession here, once, rather than in every downstream
         // reader -- profession falls back to the raw stored value on the off chance an
         // older report somehow still doesn't resolve, matching canonicalName()'s own
         // non-destructive fallback above (never crashes computation over old data, just
         // can't fully normalize display for it).
-        const rows = rep.players.map(r => Object.assign({}, r, { name: canonicalName(r.name), profession: canonicalProfession(r.profession) || r.profession }));
+        const rows = validPlayers.map(r => Object.assign({}, r, { name: canonicalName(r.name), profession: canonicalProfession(r.profession) || r.profession }));
         rows.forEach(r => {
             if (!ratings[r.name])
                 ratings[r.name] = { elo: ELO_START, battles: 0, wins: 0, losses: 0, draws: 0, profession: r.profession };
@@ -3373,12 +3392,18 @@ document.getElementById('dbgShowInvalidReports').addEventListener('click', () =>
         out.textContent = 'None found — every cached report has a recognized class and plausible stats for every player.';
         return;
     }
-    out.innerHTML = '<div style="color:var(--amber); margin-bottom:8px;">' + list.length + ' report(s) currently excluded from Elo/prices/stats:</div>'
-        + list.slice().sort((a, b) => a.day - b.day).map(r => '<div style="padding:4px 0; border-bottom:1px solid var(--line);">'
-            + '<span class="day-link" data-day="' + r.day + '">Day ' + r.day + '</span>'
-            + (r.filename ? ' — ' + escapeHtml(r.filename) : '')
-            + '<br><span style="color:var(--text-dim);">' + r.reasons.map(escapeHtml).join('<br>') + '</span>'
-            + '</div>').join('');
+    out.innerHTML = '<div style="color:var(--amber); margin-bottom:8px;">' + list.length + ' report(s) with at least one flagged player row:</div>'
+        + list.slice().sort((a, b) => a.day - b.day).map(r => {
+            const whole = r.droppedCount >= r.totalCount;
+            const scope = whole
+                ? '<b style="color:var(--red);">entire report excluded</b> (all ' + r.totalCount + ' players flagged)'
+                : r.droppedCount + ' of ' + r.totalCount + ' player(s) dropped — the other ' + (r.totalCount - r.droppedCount) + ' still count normally';
+            return '<div style="padding:4px 0; border-bottom:1px solid var(--line);">'
+                + '<span class="day-link" data-day="' + r.day + '">Day ' + r.day + '</span>'
+                + (r.filename ? ' — ' + escapeHtml(r.filename) : '') + ' — ' + scope
+                + '<br><span style="color:var(--text-dim);">' + r.reasons.map(escapeHtml).join('<br>') + '</span>'
+                + '</div>';
+        }).join('');
 });
 document.getElementById('invalidReportsResults').addEventListener('click', e => {
     const dayLink = e.target.closest('.day-link');
@@ -4369,17 +4394,23 @@ function openDayDetail(day) {
         return '<td' + (flagged ? ' class="stat-flagged" title="Exceeds the plausibility ceiling for this field"' : '') + '>' + display + '</td>';
     };
     const reportInvalid = invalidReasonsForReport(rep);
-    bodyEl.innerHTML = (reportInvalid.length
-        ? '<div style="color:var(--red); margin-bottom:10px; font-weight:700;">This report is currently EXCLUDED from Elo/prices/stats — see reasons below the table.</div>'
-        : '')
+    // Row-level now, not whole-report (see computeMarketFromReports) -- a player is
+    // dropped from calculations individually, the rest of this same report's
+    // players still count normally unless every single one is flagged.
+    const isDropped = p => !canonicalProfession(p.profession) || implausibleFields(p).length > 0;
+    const droppedCount = players.filter(isDropped).length;
+    const bannerHtml = !reportInvalid.length ? '' : (droppedCount >= players.length
+        ? '<div style="color:var(--red); margin-bottom:10px; font-weight:700;">Every player here is flagged — the whole report is excluded from Elo/prices/stats.</div>'
+        : '<div style="color:var(--amber); margin-bottom:10px; font-weight:700;">' + droppedCount + ' of ' + players.length + ' player(s) below (marked DROPPED) are excluded from Elo/prices/stats — the rest still count normally.</div>');
+    bodyEl.innerHTML = bannerHtml
         + '<div style="overflow-x:auto;"><table class="history"><thead><tr>'
         + '<th><span>Name</span></th><th><span>Class</span></th><th><span>Faction</span></th>'
         + '<th><span>Kills</span></th><th><span>Assists</span></th><th><span>Deaths</span></th>'
         + '<th><span>Damage</span></th><th><span>Largest Hit</span></th><th><span>Damage Taken</span></th>'
         + '<th><span>Healing</span></th><th><span>Largest Heal</span></th><th><span>Captures</span></th>'
         + '</tr></thead><tbody>'
-        + players.map(p => '<tr>'
-            + '<td class="sym">' + escapeHtml(p.name) + '</td>'
+        + players.map(p => '<tr' + (isDropped(p) ? ' style="opacity:0.6;"' : '') + '>'
+            + '<td class="sym">' + escapeHtml(p.name) + (isDropped(p) ? ' <span style="color:var(--red); font-size:10px; font-weight:700;">DROPPED</span>' : '') + '</td>'
             + '<td' + (canonicalProfession(p.profession) ? '' : ' class="stat-flagged" title="Not one of the nine known classes"') + '><span class="cls-pill" style="color:' + professionColor(p.profession) + '">' + escapeHtml(p.profession || 'Unknown') + '</span></td>'
             + '<td>' + escapeHtml(p.faction || 'Unknown') + '</td>'
             + '<td>' + (p.kills || 0) + '</td>'
@@ -4395,7 +4426,7 @@ function openDayDetail(day) {
         + '</tbody></table></div>'
         + '<div style="margin-top:10px; font-size:11px; color:var(--text-dim);">Red cells exceed the plausibility ceiling, or (Class column) aren\'t one of the nine known classes — a strong signal, not absolute proof, that the cell is an OCR misread rather than a genuine value.</div>'
         + (reportInvalid.length
-            ? '<div style="margin-top:10px; font-size:12px; color:var(--red);">Excluded because:<br>' + reportInvalid.map(escapeHtml).join('<br>') + '</div>'
+            ? '<div style="margin-top:10px; font-size:12px; color:var(--red);">Flagged:<br>' + reportInvalid.map(escapeHtml).join('<br>') + '</div>'
             : '');
     modal.classList.remove('hidden');
 }
