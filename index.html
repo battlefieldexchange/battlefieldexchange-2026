@@ -1112,11 +1112,11 @@ const REQUIRED_HEADERS = ['name', 'profession', 'faction', 'kills', 'assists', '
 // ceiling, so a genuinely exceptional real performance right at the edge isn't
 // wrongly excluded. Adjust freely if these still aren't right.
 const PLAUSIBILITY_LIMITS = {
-    damage: 2000000, damageTaken: 2000000,
-    healing: 2000000,
-    kills: 500, assists: 500, // user confirmed kills look accurate as-is
-    largestHit: 15000, // user's explicit stated maximum possible largest hit (a real legitimate 14,021 appeared on a shared day, so this is tight but not wrong)
-    largestHeal: 25000,
+    damage: 4000000, damageTaken: 3000000,
+    healing: 5000000,
+    kills: 200, assists: 200, // user confirmed kills look accurate as-is
+    largestHit: 16000, // user's explicit stated maximum possible largest hit (a real legitimate 14,021 appeared on a shared day, so this is tight but not wrong)
+    largestHeal: 85000,
 };
 // Medic is a fundamentally different role for healing output specifically — the
 // same two-bucket split eloWeightsFor() already makes for Elo weighting (medics
