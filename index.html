@@ -216,10 +216,19 @@
   .day-modal{position:fixed; inset:0; z-index:500; display:flex; align-items:center; justify-content:center; padding:24px;}
   .day-modal.hidden{display:none;}
   .day-modal-backdrop{position:absolute; inset:0; background:rgba(2,8,8,0.72);}
-  .day-modal-panel{position:relative; width:min(1200px, 100%); max-height:88vh; display:flex; flex-direction:column;}
+  .day-modal-panel{position:relative; width:min(1360px, 100%); max-height:88vh; display:flex; flex-direction:column;}
   .day-modal-panel .panel-body{overflow:auto;}
   .day-modal-panel table.history{font-size:12.5px;}
   .day-modal-panel td.stat-flagged{color:var(--red); font-weight:700;}
+  .day-modal-panel input.day-edit, .day-modal-panel select.day-edit{background:var(--panel-2); border:1px solid var(--line); color:var(--text); border-radius:6px; padding:3px 6px; font-family:var(--mono); font-size:12px;}
+  .day-modal-panel input.day-edit{width:82px;}
+  .day-modal-panel table.history td{white-space:nowrap; padding:6px 5px;}
+  .day-modal-panel .day-edit.changed{border-color:var(--amber);}
+  .day-modal-panel td.stat-flagged input.day-edit, .day-modal-panel td.stat-flagged select.day-edit{border-color:var(--red); color:var(--red);}
+  .day-edit-bar{display:flex; align-items:center; gap:14px; margin-top:14px; padding:12px 0 4px; border-top:1px solid var(--line); position:sticky; bottom:-14px; background:var(--panel); z-index:2;}
+  .day-edit-bar .primary-btn{width:auto; padding:8px 18px;}
+  .day-edit-msg{font-size:12px; color:var(--text-dim);}
+  .day-edit-msg.err{color:var(--red);}
   .class-expand{background:var(--panel-2); border-left:2px solid var(--phosphor-dim); padding:12px 16px; margin:2px 0;}
   .class-expand-meta{color:var(--text-dim); font-size:12px; margin-bottom:8px;}
   .class-row{display:flex; justify-content:space-between; align-items:center; padding:6px 0; border-bottom:1px solid var(--line); font-size:13px;}
@@ -1106,15 +1115,52 @@ const PLAUSIBILITY_LIMITS = {
     damage: 2000000, damageTaken: 2000000,
     healing: 2000000,
     kills: 500, assists: 500, // user confirmed kills look accurate as-is
-    largestHit: 25000, largestHeal: 25000,
+    largestHit: 15000, // user's explicit stated maximum possible largest hit (a real legitimate 14,021 appeared on a shared day, so this is tight but not wrong)
+    largestHeal: 25000,
+};
+// Medic is a fundamentally different role for healing output specifically — the
+// same two-bucket split eloWeightsFor() already makes for Elo weighting (medics
+// are weighted 45% on healing; everyone else 0%). The flat ceiling above was
+// wrongly dropping real Medic rows as "obscene": the user shared a real, confirmed-
+// legitimate day where every Medic had healing in the 2.3M-2.8M range and
+// largestHeal 46K-58K, versus every non-healer class sitting at 150K-250K healing
+// and 3.5K-9K largestHeal in that SAME battle — a healer doing their actual job
+// output 10-15x what anyone else does incidentally, which a flat non-class-aware
+// ceiling can never represent correctly. Headroom kept above the observed real max.
+const MEDIC_PLAUSIBILITY_OVERRIDES = {
+    healing: 8000000,
+    largestHeal: 150000,
 };
 const PLAUSIBILITY_LABELS = { damage: 'damage', damageTaken: 'damage taken', healing: 'healing', kills: 'kills', assists: 'assists', largestHit: 'largest hit', largestHeal: 'largest heal' };
-// Returns every field on `stats` that exceeds its PLAUSIBILITY_LIMITS ceiling, or []
-// if none do. `stats` just needs matching keys — used both for a freshly-parsed row
+// Returns every field on `stats` that exceeds its plausibility ceiling, or [] if
+// none do. `stats` just needs matching keys plus (for the medic-aware healing
+// fields to apply correctly) a `profession` — used both for a freshly-parsed row
 // (plain field names) and for a live single-field edit (see the review-table input
-// handler below).
+// handler below). Falls back to the non-medic ceiling if profession is missing or
+// doesn't resolve, which is the safer direction to fail in (flags for review
+// rather than silently waving through an inflated value under cover of an unknown
+// class).
 function implausibleFields(stats) {
-    return Object.keys(PLAUSIBILITY_LIMITS).filter(f => (stats[f] || 0) > PLAUSIBILITY_LIMITS[f]);
+    const isMedic = normProf(canonicalProfession(stats.profession) || stats.profession || '') === 'medic';
+    return Object.keys(PLAUSIBILITY_LIMITS).filter(f => {
+        const limit = (isMedic && f in MEDIC_PLAUSIBILITY_OVERRIDES) ? MEDIC_PLAUSIBILITY_OVERRIDES[f] : PLAUSIBILITY_LIMITS[f];
+        return (stats[f] || 0) > limit;
+    });
+}
+// Only these fields actually feed the Elo composite (MEDIC_WEIGHTS/DPS_WEIGHTS) and
+// therefore prices. largestHit, largestHeal, damageTaken and captures never touch
+// Elo at all — so a bad reading in one of THOSE shouldn't throw away the same row's
+// perfectly good damage/kills/assists/healing/deaths. Those fields are handled
+// per-field instead: skipped as a candidate for their own Top Stats record
+// (computeTopStats) while the row still counts normally everywhere else.
+const ELO_RELEVANT_FIELDS = ['damage', 'healing', 'kills', 'assists', 'deaths'];
+function eloRelevantImplausible(stats) {
+    return implausibleFields(stats).filter(f => ELO_RELEVANT_FIELDS.includes(f));
+}
+// A row is dropped from Elo/price computation only for an unrecognized class (the
+// class picks the Elo weight bucket) or an implausible Elo-relevant stat.
+function isRowDroppedFromElo(p) {
+    return !canonicalProfession(p.profession) || eloRelevantImplausible(p).length > 0;
 }
 function validateAndParseReportHTML(text) {
     const doc_ = new DOMParser().parseFromString(text, 'text/html');
@@ -1145,7 +1191,7 @@ function validateAndParseReportHTML(text) {
             continue;
         const damage = num('damage');
         const healing = num('healing');
-        const statsForCheck = { damage, healing, damageTaken: num('damage taken'), kills: num('kills'), assists: num('assists'), largestHit: num('largest performed hit'), largestHeal: num('largest heal') };
+        const statsForCheck = { damage, healing, damageTaken: num('damage taken'), kills: num('kills'), assists: num('assists'), largestHit: num('largest performed hit'), largestHeal: num('largest heal'), profession: get('profession') };
         const badFields = implausibleFields(statsForCheck);
         if (badFields.length) {
             const f = badFields[0]; // report the first; re-running after fixing it will catch any others
@@ -1277,6 +1323,35 @@ function addReportLogRow(filename, msg, isError) {
     log.prepend(row);
 }
 const REPORTS_CACHE_KEY = 'bfx_reports_cache_v1_' + firebaseConfig.projectId;
+// Admin edits to an EXISTING report (see saveDayEdits) change its content but not the
+// report COUNT, so the count check in verifyAgainstServer can't see them — every other
+// browser's cached copy would keep serving the old, uncorrected numbers forever. Each
+// edit appends {id, seq, at} to settings/reportEdits; every client remembers the highest
+// seq it has applied and, on each verify (page load + every 2 minutes), re-fetches ONLY
+// the reports edited since — a handful of single-doc reads, never the whole collection
+// (a full refetch per edit would burn through the free-tier read quota fast, which has
+// already bitten this app once). seq is assigned inside the writing transaction rather
+// than taken from a client clock, so two admins with skewed clocks can't produce an
+// out-of-order entry another browser would skip.
+const REPORTS_EDITSEQ_KEY = 'bfx_reports_editseq_v1_' + firebaseConfig.projectId;
+const REPORT_EDIT_LOG_CAP = 300;
+// Pure (no Firestore/DOM) so it can be tested directly: given the server's edit log and
+// the highest seq this browser has applied (null = never recorded one), decide which
+// report ids to re-fetch, whether the log was truncated past what this browser has seen
+// (a gap means some edits are unrecoverable from the log -> drop the whole cache once),
+// and the new high-water mark.
+function planReportEditSync(log, lastSeen) {
+    const entries = (log || [])
+        .filter(e => e && typeof e.id === 'string' && typeof e.seq === 'number')
+        .sort((a, b) => a.seq - b.seq);
+    const seen = lastSeen == null ? 0 : lastSeen;
+    const pending = entries.filter(e => e.seq > seen);
+    return {
+        ids: [...new Set(pending.map(e => e.id))],
+        fullReset: lastSeen != null && entries.length > 0 && entries[0].seq > lastSeen + 1,
+        newLastSeen: entries.reduce((m, e) => Math.max(m, e.seq), seen),
+    };
+}
 function loadCachedReports() {
     try {
         const raw = localStorage.getItem(REPORTS_CACHE_KEY);
@@ -1797,8 +1872,51 @@ async function subscribeToMarket() {
     if (byId.size)
         paint();
     async function verifyAgainstServer() {
-        if (byId.size === 0)
+        // Step 1: apply any admin edits to already-cached reports (see planReportEditSync).
+        let plan = null;
+        try {
+            const logSnap = await getDoc(doc(db, 'settings', 'reportEdits'));
+            const stored = localStorage.getItem(REPORTS_EDITSEQ_KEY);
+            plan = planReportEditSync(logSnap.exists() ? (logSnap.data().log || []) : [], stored === null ? null : Number(stored));
+        }
+        catch (e) { }
+        const recordSeq = () => {
+            try {
+                if (plan)
+                    localStorage.setItem(REPORTS_EDITSEQ_KEY, String(plan.newLastSeen));
+            }
+            catch (e) { }
+        };
+        if (byId.size === 0) {
+            // Nothing cached to go stale — a fresh full fetch is about to read the latest
+            // content anyway, so just remember where the edit log stands.
+            recordSeq();
             return false;
+        }
+        if (plan && plan.fullReset) {
+            byId.clear();
+            saveCachedReports([]);
+            recordSeq();
+            return true;
+        }
+        if (plan && plan.ids.length) {
+            try {
+                for (const id of plan.ids) {
+                    const s = await getDoc(doc(db, 'reports', id));
+                    if (s.exists())
+                        byId.set(id, { id: s.id, ...s.data() });
+                    else
+                        byId.delete(id);
+                }
+                saveCachedReports(Array.from(byId.values()));
+                recordSeq(); // only after every fetch succeeded, so a failure retries next check
+                paint();
+            }
+            catch (e) { }
+        }
+        else {
+            recordSeq();
+        }
         try {
             const countSnap = await getCountFromServer(collection(db, 'reports'));
             if (countSnap.data().count !== byId.size) {
@@ -2497,10 +2615,17 @@ function invalidReasonsForReport(rep) {
     const reasons = [];
     (rep.players || []).forEach(p => {
         if (!canonicalProfession(p.profession))
-            reasons.push(p.name + ': unrecognized class "' + p.profession + '"');
+            reasons.push(p.name + ': unrecognized class "' + p.profession + '" — row dropped from Elo/prices');
         const bad = implausibleFields(p);
-        if (bad.length)
-            reasons.push(p.name + ': implausible ' + bad.map(f => PLAUSIBILITY_LABELS[f] + ' (' + (p[f] || 0).toLocaleString() + ')').join(', '));
+        if (bad.length) {
+            const eloBad = bad.filter(f => ELO_RELEVANT_FIELDS.includes(f));
+            const describe = fs => fs.map(f => PLAUSIBILITY_LABELS[f] + ' (' + (p[f] || 0).toLocaleString() + ')').join(', ');
+            if (eloBad.length)
+                reasons.push(p.name + ': implausible ' + describe(eloBad) + ' — row dropped from Elo/prices');
+            const otherBad = bad.filter(f => !ELO_RELEVANT_FIELDS.includes(f));
+            if (otherBad.length)
+                reasons.push(p.name + ': implausible ' + describe(otherBad) + ' — that field is skipped for Top Stats; the row still counts for Elo');
+        }
     });
     return reasons;
 }
@@ -2518,19 +2643,12 @@ function computeMarketFromReports(reportsList) {
         // entirely, since every report touched by even a single bad row lost ALL its
         // other players too -- that's what actually caused Elo Distribution to go
         // empty. The rest of a report with one bad row still counts normally now.
-        const rowReasons = [];
-        const validPlayers = rep.players.filter(p => {
-            if (!canonicalProfession(p.profession)) {
-                rowReasons.push(p.name + ': unrecognized class "' + p.profession + '"');
-                return false;
-            }
-            const bad = implausibleFields(p);
-            if (bad.length) {
-                rowReasons.push(p.name + ': implausible ' + bad.map(f => PLAUSIBILITY_LABELS[f] + ' (' + (p[f] || 0).toLocaleString() + ')').join(', '));
-                return false;
-            }
-            return true;
-        });
+        // Only an unrecognized class or an implausible Elo-relevant stat drops a row (see
+        // isRowDroppedFromElo). A bad largestHit/largestHeal/damageTaken/captures does
+        // NOT — those never touch Elo, so the row's other, good stats still count; the
+        // field is just skipped for its own Top Stats record instead.
+        const validPlayers = rep.players.filter(p => !isRowDroppedFromElo(p));
+        const rowReasons = invalidReasonsForReport(rep);
         if (rowReasons.length) {
             invalidReports.push({ day: rep.day, id: rep.id, filename: rep.filename, reasons: rowReasons, droppedCount: rep.players.length - validPlayers.length, totalCount: rep.players.length });
         }
@@ -3396,8 +3514,10 @@ document.getElementById('dbgShowInvalidReports').addEventListener('click', () =>
         + list.slice().sort((a, b) => a.day - b.day).map(r => {
             const whole = r.droppedCount >= r.totalCount;
             const scope = whole
-                ? '<b style="color:var(--red);">entire report excluded</b> (all ' + r.totalCount + ' players flagged)'
-                : r.droppedCount + ' of ' + r.totalCount + ' player(s) dropped — the other ' + (r.totalCount - r.droppedCount) + ' still count normally';
+                ? '<b style="color:var(--red);">entire report excluded</b> (all ' + r.totalCount + ' players dropped from Elo)'
+                : (r.droppedCount === 0
+                    ? 'no players dropped — flagged field(s) are just skipped for Top Stats'
+                    : r.droppedCount + ' of ' + r.totalCount + ' player(s) dropped from Elo — the other ' + (r.totalCount - r.droppedCount) + ' still count normally');
             return '<div style="padding:4px 0; border-bottom:1px solid var(--line);">'
                 + '<span class="day-link" data-day="' + r.day + '">Day ' + r.day + '</span>'
                 + (r.filename ? ' — ' + escapeHtml(r.filename) : '') + ' — ' + scope
@@ -4342,7 +4462,14 @@ function computeTopStats() {
     const records = {};
     Object.values(state.players).forEach(p => {
         (p.history || []).forEach(h => {
+            // Per-field, not per-row: a value over its plausibility ceiling is never a
+            // candidate for its own record (so e.g. a 900K "largest hit" can never show up
+            // here), but the same battle's other, plausible stats stay eligible for
+            // THEIR records.
+            const bad = implausibleFields(h);
             TOP_STAT_CATEGORIES.forEach(c => {
+                if (bad.includes(c.key))
+                    return;
                 const val = h[c.key] || 0;
                 if (!records[c.key] || val > records[c.key].value)
                     records[c.key] = { value: val, name: p.name, day: h.day, profession: h.profession };
@@ -4360,75 +4487,228 @@ function renderTopStats() {
         const r = records[c.key];
         if (!r)
             return '';
-        const dayRef = state.isAdmin ? '<span class="day-link" data-day="' + r.day + '">Day ' + r.day + '</span>' : 'Day ' + r.day;
+        const dayRef = '<span class="day-link" data-day="' + r.day + '">Day ' + r.day + '</span>';
         return '<div class="stat"><div class="label">' + escapeHtml(c.label.toUpperCase()) + '</div>'
             + '<div class="value">' + Math.round(r.value).toLocaleString() + '</div>'
             + '<div style="font-size:11px; color:var(--text-dim);">' + escapeHtml(r.name) + ' (' + escapeHtml(r.profession || 'Unknown') + ') · ' + dayRef + '</div></div>';
     }).join('');
 }
-// Admin-only: given a day number, find the actual stored report and show every
-// player's full row from it -- the concrete tool for "is this really what the
-// export said, or is something upstream of the aggregate wrong." Reuses
-// implausibleFields() (the same plausibility table the upload gate enforces) to
-// highlight any cell that's over the ceiling directly in this view.
-function openDayDetail(day) {
-    if (!state.isAdmin)
-        return;
+// Anyone signed in can open a day's full report now (reports are readable by every
+// signed-in user anyway, and "click a day, see what actually happened" is useful to every
+// trader, not just admins). Only admins get editable cells and a save button; the real
+// boundary on actually CHANGING a report is the Firestore rule (reports update = isAdmin()),
+// not this UI check. Reuses implausibleFields()/isRowDroppedFromElo() — the same checks the
+// upload gate and the Elo computation use — so what's highlighted here is exactly what the
+// rest of the app is treating as suspect.
+const DAY_STAT_COLUMNS = [
+    ['kills', 'Kills'], ['assists', 'Assists'], ['deaths', 'Deaths'], ['damage', 'Damage'],
+    ['largestHit', 'Largest Hit'], ['damageTaken', 'Damage Taken'], ['healing', 'Healing'],
+    ['largestHeal', 'Largest Heal'], ['captures', 'Captures'],
+];
+// Pure (no DOM/Firestore) so the edit-application rule can be tested directly: apply
+// [{idx, field, value}] edits to a COPY of a report's players array and count how many
+// actually changed something. Every other field on each player (extra columns, faction,
+// anything else already stored) is preserved untouched.
+function buildEditedPlayers(origPlayers, edits) {
+    const out = origPlayers.map(p => ({ ...p }));
+    let changed = 0;
+    edits.forEach(({ idx, field, value }) => {
+        const before = field === 'profession' ? out[idx].profession : (out[idx][field] || 0);
+        if (before !== value) {
+            out[idx][field] = value;
+            changed++;
+        }
+    });
+    return { players: out, changed };
+}
+function openDayDetail(day, statusMsg) {
     const modal = document.getElementById('dayDetailModal');
     const titleEl = document.getElementById('dayDetailTitle');
     const bodyEl = document.getElementById('dayDetailBody');
+    bodyEl.oninput = bodyEl.onchange = bodyEl.onclick = null;
     const rep = state.reports.find(r => r.day === day);
     if (!rep) {
         titleEl.textContent = 'Day ' + day;
-        bodyEl.innerHTML = '<div class="empty-state">No cached report found for day ' + day + ' in this session. It may not have synced into state.reports yet — try refreshing the page, or check the "reports" collection directly in the Firebase console for day == ' + day + '.</div>';
+        bodyEl.innerHTML = '<div class="empty-state">No cached report found for day ' + day + ' in this session. It may not have synced into state.reports yet — try refreshing the page.</div>';
         modal.classList.remove('hidden');
         return;
     }
-    // Highest damage first -- surfaces an outlier row immediately rather than
-    // making the admin hunt for it in whatever order the export happened to list
-    // players in.
-    const players = [...rep.players].sort((a, b) => (b.damage || 0) - (a.damage || 0));
-    titleEl.textContent = 'Day ' + day + ' — ' + players.length + ' player' + (players.length === 1 ? '' : 's') + (rep.filename ? ' · ' + rep.filename : '');
-    const cell = (p, field, display) => {
+    const canEdit = !!state.isAdmin;
+    // Highest damage first (original index kept for edits) -- surfaces an outlier row
+    // immediately rather than making anyone hunt for it.
+    const rows = rep.players.map((p, idx) => ({ p, idx })).sort((a, b) => (b.p.damage || 0) - (a.p.damage || 0));
+    titleEl.textContent = 'Day ' + day + ' — ' + rows.length + ' player' + (rows.length === 1 ? '' : 's') + (rep.filename ? ' · ' + rep.filename : '');
+    const reportReasons = invalidReasonsForReport(rep);
+    const droppedCount = rows.filter(r => isRowDroppedFromElo(r.p)).length;
+    const banner = !reportReasons.length ? '' : (droppedCount >= rows.length
+        ? '<div style="color:var(--red); margin-bottom:10px; font-weight:700;">Every player here is dropped from Elo/prices/stats — the whole report is excluded.</div>'
+        : '<div style="color:var(--amber); margin-bottom:10px; font-weight:700;">'
+            + (droppedCount ? droppedCount + ' of ' + rows.length + ' player(s) (marked DROPPED) are excluded from Elo/prices — the rest still count normally. ' : '')
+            + 'Cells in red look wrong'
+            + (canEdit ? ' — as an admin you can correct them below and save.' : '.') + '</div>');
+    const statCell = (p, idx, field) => {
         const flagged = implausibleFields(p).includes(field);
-        return '<td' + (flagged ? ' class="stat-flagged" title="Exceeds the plausibility ceiling for this field"' : '') + '>' + display + '</td>';
+        const v = p[field] || 0;
+        const inner = canEdit
+            ? '<input class="day-edit" type="number" min="0" step="1" data-idx="' + idx + '" data-field="' + field + '" data-orig="' + v + '" value="' + v + '">'
+            : v.toLocaleString();
+        return '<td data-cell="' + field + '"' + (flagged ? ' class="stat-flagged" title="Exceeds the plausibility ceiling for this field"' : '') + '>' + inner + '</td>';
     };
-    const reportInvalid = invalidReasonsForReport(rep);
-    // Row-level now, not whole-report (see computeMarketFromReports) -- a player is
-    // dropped from calculations individually, the rest of this same report's
-    // players still count normally unless every single one is flagged.
-    const isDropped = p => !canonicalProfession(p.profession) || implausibleFields(p).length > 0;
-    const droppedCount = players.filter(isDropped).length;
-    const bannerHtml = !reportInvalid.length ? '' : (droppedCount >= players.length
-        ? '<div style="color:var(--red); margin-bottom:10px; font-weight:700;">Every player here is flagged — the whole report is excluded from Elo/prices/stats.</div>'
-        : '<div style="color:var(--amber); margin-bottom:10px; font-weight:700;">' + droppedCount + ' of ' + players.length + ' player(s) below (marked DROPPED) are excluded from Elo/prices/stats — the rest still count normally.</div>');
-    bodyEl.innerHTML = bannerHtml
+    const classCell = (p, idx) => {
+        const resolved = canonicalProfession(p.profession);
+        if (!canEdit)
+            return '<td data-cell="profession"' + (resolved ? '' : ' class="stat-flagged" title="Not one of the nine known classes"') + '><span class="cls-pill" style="color:' + professionColor(p.profession) + '">' + escapeHtml(p.profession || 'Unknown') + '</span></td>';
+        const opts = (resolved ? '' : '<option value="" selected>⚠ ' + escapeHtml(p.profession || 'Unknown') + ' — pick a class</option>')
+            + KNOWN_PROFESSIONS.map(k => '<option value="' + escapeHtml(k) + '"' + (resolved === k ? ' selected' : '') + '>' + escapeHtml(k) + '</option>').join('');
+        return '<td data-cell="profession"' + (resolved ? '' : ' class="stat-flagged" title="Not one of the nine known classes"') + '><select class="day-edit" data-idx="' + idx + '" data-field="profession" data-orig="' + escapeHtml(resolved || '') + '">' + opts + '</select></td>';
+    };
+    const badge = p => isRowDroppedFromElo(p)
+        ? ' <span style="color:var(--red); font-size:10px; font-weight:700;">DROPPED</span>'
+        : (implausibleFields(p).length ? ' <span style="color:var(--amber); font-size:10px; font-weight:700;" title="A flagged field is skipped for Top Stats; this player still counts for Elo">FLAGGED</span>' : '');
+    bodyEl.innerHTML = banner
         + '<div style="overflow-x:auto;"><table class="history"><thead><tr>'
         + '<th><span>Name</span></th><th><span>Class</span></th><th><span>Faction</span></th>'
-        + '<th><span>Kills</span></th><th><span>Assists</span></th><th><span>Deaths</span></th>'
-        + '<th><span>Damage</span></th><th><span>Largest Hit</span></th><th><span>Damage Taken</span></th>'
-        + '<th><span>Healing</span></th><th><span>Largest Heal</span></th><th><span>Captures</span></th>'
+        + DAY_STAT_COLUMNS.map(([, label]) => '<th><span>' + label + '</span></th>').join('')
         + '</tr></thead><tbody>'
-        + players.map(p => '<tr' + (isDropped(p) ? ' style="opacity:0.6;"' : '') + '>'
-            + '<td class="sym">' + escapeHtml(p.name) + (isDropped(p) ? ' <span style="color:var(--red); font-size:10px; font-weight:700;">DROPPED</span>' : '') + '</td>'
-            + '<td' + (canonicalProfession(p.profession) ? '' : ' class="stat-flagged" title="Not one of the nine known classes"') + '><span class="cls-pill" style="color:' + professionColor(p.profession) + '">' + escapeHtml(p.profession || 'Unknown') + '</span></td>'
+        + rows.map(({ p, idx }) => '<tr data-idx="' + idx + '"' + (isRowDroppedFromElo(p) ? ' style="opacity:0.7;"' : '') + '>'
+            + '<td class="sym">' + escapeHtml(p.name) + badge(p) + '</td>'
+            + classCell(p, idx)
             + '<td>' + escapeHtml(p.faction || 'Unknown') + '</td>'
-            + '<td>' + (p.kills || 0) + '</td>'
-            + '<td>' + (p.assists || 0) + '</td>'
-            + '<td>' + (p.deaths || 0) + '</td>'
-            + cell(p, 'damage', (p.damage || 0).toLocaleString())
-            + cell(p, 'largestHit', (p.largestHit || 0).toLocaleString())
-            + cell(p, 'damageTaken', (p.damageTaken || 0).toLocaleString())
-            + cell(p, 'healing', (p.healing || 0).toLocaleString())
-            + cell(p, 'largestHeal', (p.largestHeal || 0).toLocaleString())
-            + '<td>' + (p.captures || 0) + '</td>'
+            + DAY_STAT_COLUMNS.map(([field]) => statCell(p, idx, field)).join('')
             + '</tr>').join('')
         + '</tbody></table></div>'
         + '<div style="margin-top:10px; font-size:11px; color:var(--text-dim);">Red cells exceed the plausibility ceiling, or (Class column) aren\'t one of the nine known classes — a strong signal, not absolute proof, that the cell is an OCR misread rather than a genuine value.</div>'
-        + (reportInvalid.length
-            ? '<div style="margin-top:10px; font-size:12px; color:var(--red);">Flagged:<br>' + reportInvalid.map(escapeHtml).join('<br>') + '</div>'
+        + (reportReasons.length ? '<div style="margin-top:10px; font-size:12px; color:var(--red);">Flagged:<br>' + reportReasons.map(escapeHtml).join('<br>') + '</div>' : '')
+        + (canEdit
+            ? '<div class="day-edit-bar"><button type="button" class="primary-btn" id="dayEditSave" disabled>Save changes</button><span id="dayEditMsg" class="day-edit-msg">'
+                + (statusMsg ? escapeHtml(statusMsg) : 'Edit any cell, then save — the correction is written to this report in Firestore for everyone.') + '</span></div>'
             : '');
     modal.classList.remove('hidden');
+    if (!canEdit)
+        return;
+    const saveBtn = document.getElementById('dayEditSave');
+    const refreshRow = el => {
+        const tr = el.closest('tr');
+        const idx = Number(tr.dataset.idx);
+        const vals = {};
+        tr.querySelectorAll('input.day-edit').forEach(i => { vals[i.dataset.field] = parseInt(i.value, 10) || 0; });
+        const sel = tr.querySelector('select.day-edit');
+        vals.profession = sel && sel.value ? sel.value : rep.players[idx].profession;
+        const flagged = implausibleFields(vals);
+        tr.querySelectorAll('td[data-cell]').forEach(td => {
+            const f = td.dataset.cell;
+            td.classList.toggle('stat-flagged', f === 'profession' ? !canonicalProfession(vals.profession) : flagged.includes(f));
+        });
+    };
+    const onEdit = e => {
+        const el = e.target.closest('.day-edit');
+        if (!el)
+            return;
+        const orig = el.dataset.orig;
+        const cur = el.tagName === 'SELECT' ? el.value : String(parseInt(el.value, 10) || 0);
+        el.classList.toggle('changed', el.tagName === 'SELECT' ? (el.value !== '' && el.value !== orig) : cur !== orig);
+        refreshRow(el);
+        saveBtn.disabled = !bodyEl.querySelector('.day-edit.changed');
+    };
+    bodyEl.oninput = onEdit;
+    bodyEl.onchange = onEdit;
+    bodyEl.onclick = e => { if (e.target.closest('#dayEditSave'))
+        saveDayEdits(day); };
+}
+// Admin-only write-back of edits made in the day-detail view. Updates the report doc itself
+// (rule: reports update = isAdmin()), then appends to the edit log other browsers poll (see
+// planReportEditSync) so the correction actually propagates past their cached copies,
+// recomputes locally, and republishes the canonical price snapshot so trade prices don't
+// disagree with the freshly-recomputed Elo.
+async function saveDayEdits(day) {
+    if (!state.isAdmin)
+        return;
+    const rep = state.reports.find(r => r.day === day);
+    const bodyEl = document.getElementById('dayDetailBody');
+    const msgEl = document.getElementById('dayEditMsg');
+    const saveBtn = document.getElementById('dayEditSave');
+    if (!rep || !msgEl)
+        return;
+    const edits = [];
+    const errors = [];
+    bodyEl.querySelectorAll('.day-edit').forEach(el => {
+        const idx = Number(el.dataset.idx);
+        const field = el.dataset.field;
+        const who = rep.players[idx].name;
+        if (field === 'profession') {
+            if (el.value !== '' && el.value !== rep.players[idx].profession)
+                edits.push({ idx, field, value: el.value });
+            return;
+        }
+        const raw = el.value.trim();
+        if (!/^\d+$/.test(raw)) {
+            errors.push(who + ': ' + field + ' must be a whole number, 0 or more');
+            return;
+        }
+        edits.push({ idx, field, value: parseInt(raw, 10) });
+    });
+    if (errors.length) {
+        msgEl.textContent = errors[0] + (errors.length > 1 ? ' (+' + (errors.length - 1) + ' more)' : '');
+        msgEl.className = 'day-edit-msg err';
+        return;
+    }
+    const { players: newPlayers, changed } = buildEditedPlayers(rep.players, edits);
+    if (!changed) {
+        msgEl.textContent = 'No changes to save.';
+        msgEl.className = 'day-edit-msg';
+        return;
+    }
+    const stillBad = newPlayers.filter(p => isRowDroppedFromElo(p) || implausibleFields(p).length).length;
+    if (!confirm('Save ' + changed + ' change(s) to day ' + day + '\'s report? This rewrites the stored report for everyone and recalculates Elo/prices.'
+        + (stillBad ? '\n\n' + stillBad + ' player row(s) will STILL contain flagged values after this (they stay dropped/skipped until fixed).' : '')))
+        return;
+    saveBtn.disabled = true;
+    msgEl.textContent = 'Saving…';
+    msgEl.className = 'day-edit-msg';
+    try {
+        await updateDoc(doc(db, 'reports', rep.id), { players: newPlayers, lastEditedBy: state.username, lastEditedAt: Date.now() });
+        let logged = true;
+        try {
+            await logReportEdit(rep.id);
+        }
+        catch (logErr) {
+            logged = false;
+            console.error('[bfx] report edit saved but could not be logged for other browsers:', logErr);
+        }
+        // state.reports holds the same object references the report cache map does, so
+        // mutating in place keeps the next snapshot-driven repaint from reverting it.
+        rep.players = newPlayers;
+        rep.lastEditedBy = state.username;
+        saveCachedReports(state.reports);
+        recomputeMarket();
+        renderAll();
+        let synced = true;
+        try {
+            await republishLatestPriceSnapshot();
+        }
+        catch (syncErr) {
+            synced = false;
+        }
+        openDayDetail(day, 'Saved ' + changed + ' change(s) to Firestore.'
+            + (logged ? ' Other open browsers pick it up within about 2 minutes.' : ' (Could not log the edit for other browsers — they will not see it until their cache refreshes; check console.)')
+            + (synced ? '' : ' Price re-sync failed — trades may use old prices until the next report or a manual "Recalculate & broadcast".'));
+    }
+    catch (err) {
+        saveBtn.disabled = false;
+        msgEl.textContent = 'Save failed: ' + err.message;
+        msgEl.className = 'day-edit-msg err';
+    }
+}
+async function logReportEdit(reportId) {
+    const ref = doc(db, 'settings', 'reportEdits');
+    return runTransaction(db, async (tx) => {
+        const snap = await tx.get(ref);
+        const data = snap.exists() ? snap.data() : {};
+        const seq = data.nextSeq || 1;
+        const log = (data.log || []).concat([{ id: reportId, seq, at: Date.now() }]).slice(-REPORT_EDIT_LOG_CAP);
+        tx.set(ref, { log, nextSeq: seq + 1 });
+        return seq;
+    });
 }
 function closeDayDetail() {
     document.getElementById('dayDetailModal').classList.add('hidden');
@@ -4604,7 +4884,7 @@ function renderBattleLogHtml(name) {
         + totals.kills + 'K / ' + totals.assists + 'A / ' + totals.deaths + 'D</div>'
         + '<table class="history"><thead><tr><th>Day</th><th>Class</th><th>Result</th><th>Damage</th><th>Healing</th><th>Kills</th><th>Assists</th><th>Deaths</th></tr></thead><tbody>'
         + rows.map(r => '<tr>'
-            + (state.isAdmin ? '<td><span class="day-link" data-day="' + r.day + '">Day ' + r.day + '</span></td>' : '<td>Day ' + r.day + '</td>')
+            + '<td><span class="day-link" data-day="' + r.day + '">Day ' + r.day + '</span></td>'
             + '<td><span class="cls-pill" style="color:' + professionColor(r.profession) + '">' + escapeHtml(r.profession || 'Unknown') + '</span></td>'
             + '<td>' + resultCell(r) + '</td>'
             + '<td>' + fmtNum(r.damage) + '</td>'
@@ -5444,7 +5724,7 @@ async function parseBattleReportFromGrid(canvas, workerPool, onProgress) {
             name, profession, faction: rowVals.faction,
             ...numericStats,
             extra,
-            _ocr: { nameSuggestion, autoFixedFrom, implausible: implausibleFields(numericStats) }
+            _ocr: { nameSuggestion, autoFixedFrom, implausible: implausibleFields({ ...numericStats, profession }) }
         });
     }
     if (!players.length)
@@ -5534,11 +5814,17 @@ document.getElementById('ocrReviewTable').addEventListener('input', (e) => {
         player[field] = target.value;
         const ocr = player._ocr || (player._ocr = { confidence: {}, missing: [], implausible: [], nameSuggestion: null });
         ocr.missing = (ocr.missing || []).filter(f => f !== field);
-        if (field in PLAUSIBILITY_LIMITS) {
-            const n = cleanOcrNumber(target.value);
-            ocr.implausible = (ocr.implausible || []).filter(f => f !== field);
-            if ((n || 0) > PLAUSIBILITY_LIMITS[field])
-                ocr.implausible.push(field);
+        if (field in PLAUSIBILITY_LIMITS || field === 'profession') {
+            // Recompute the whole row's flags from its current values rather than just
+            // the one cell that changed — implausibleFields() is profession-aware now
+            // (a Medic's healing/largestHeal get a much higher ceiling than anyone
+            // else's), so editing the Profession cell can flip whether the healing
+            // cells next to it are suspicious, and a per-field check against the flat
+            // PLAUSIBILITY_LIMITS table would miss that.
+            const numeric = {};
+            ['kills', 'assists', 'deaths', 'damage', 'largestHit', 'damageTaken', 'healing', 'largestHeal', 'captures']
+                .forEach(f => { numeric[f] = cleanOcrNumber(player[f]) || 0; });
+            ocr.implausible = implausibleFields({ ...numeric, profession: player.profession });
         }
         if (field === 'name') {
             ocr.nameSuggestion = null;
