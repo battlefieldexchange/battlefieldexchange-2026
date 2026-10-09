@@ -1132,6 +1132,24 @@ const MEDIC_PLAUSIBILITY_OVERRIDES = {
     largestHeal: 150000,
 };
 const PLAUSIBILITY_LABELS = { damage: 'damage', damageTaken: 'damage taken', healing: 'healing', kills: 'kills', assists: 'assists', largestHit: 'largest hit', largestHeal: 'largest heal' };
+// Largest Hit is class-dependent too. Only these three classes can realistically land a
+// single hit over 10,000; every other class tops out below that. The OCR often misreads
+// a real value like 5,000 as 15,000 (a stray leading "1"), which a flat 15,000 ceiling
+// lets straight through for a non-burst class — a per-class ceiling catches it.
+// Edit the two numbers below to tune. Class names are lowercase (see normProf()).
+const HIGH_HIT_CLASSES = ['smuggler', 'bounty hunter', 'spy'];
+const LARGEST_HIT_LIMIT_HIGH_CLASSES = 15000;
+const LARGEST_HIT_LIMIT_OTHER_CLASSES = 10000;
+// The single source of truth for "what's the ceiling for THIS field on THIS row".
+// Unknown/unresolvable class falls back to the strictest (non-special) limit.
+function plausibilityLimitFor(stats, field) {
+    const prof = normProf(canonicalProfession(stats.profession) || stats.profession || '');
+    if (field === 'largestHit')
+        return HIGH_HIT_CLASSES.includes(prof) ? LARGEST_HIT_LIMIT_HIGH_CLASSES : LARGEST_HIT_LIMIT_OTHER_CLASSES;
+    if (prof === 'medic' && field in MEDIC_PLAUSIBILITY_OVERRIDES)
+        return MEDIC_PLAUSIBILITY_OVERRIDES[field];
+    return PLAUSIBILITY_LIMITS[field];
+}
 // Returns every field on `stats` that exceeds its plausibility ceiling, or [] if
 // none do. `stats` just needs matching keys plus (for the medic-aware healing
 // fields to apply correctly) a `profession` — used both for a freshly-parsed row
@@ -1141,11 +1159,7 @@ const PLAUSIBILITY_LABELS = { damage: 'damage', damageTaken: 'damage taken', hea
 // rather than silently waving through an inflated value under cover of an unknown
 // class).
 function implausibleFields(stats) {
-    const isMedic = normProf(canonicalProfession(stats.profession) || stats.profession || '') === 'medic';
-    return Object.keys(PLAUSIBILITY_LIMITS).filter(f => {
-        const limit = (isMedic && f in MEDIC_PLAUSIBILITY_OVERRIDES) ? MEDIC_PLAUSIBILITY_OVERRIDES[f] : PLAUSIBILITY_LIMITS[f];
-        return (stats[f] || 0) > limit;
-    });
+    return Object.keys(PLAUSIBILITY_LIMITS).filter(f => (stats[f] || 0) > plausibilityLimitFor(stats, f));
 }
 // Only these fields actually feed the Elo composite (MEDIC_WEIGHTS/DPS_WEIGHTS) and
 // therefore prices. largestHit, largestHeal, damageTaken and captures never touch
@@ -1195,7 +1209,7 @@ function validateAndParseReportHTML(text) {
         const badFields = implausibleFields(statsForCheck);
         if (badFields.length) {
             const f = badFields[0]; // report the first; re-running after fixing it will catch any others
-            return { valid: false, error: `Implausible ${PLAUSIBILITY_LABELS[f]} for ${name}: ${statsForCheck[f].toLocaleString()} exceeds the maximum expected (${PLAUSIBILITY_LIMITS[f].toLocaleString()}). Likely an OCR misread — double-check the source image.` };
+            return { valid: false, error: `Implausible ${PLAUSIBILITY_LABELS[f]} for ${name}: ${statsForCheck[f].toLocaleString()} exceeds the maximum expected (${plausibilityLimitFor(statsForCheck, f).toLocaleString()}). Likely an OCR misread — double-check the source image.` };
         }
         // This is the real final gate every report goes through before submitReport() —
         // an OCR-converted report that was hand-edited in the review table, a battle
